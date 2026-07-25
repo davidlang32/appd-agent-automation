@@ -1,0 +1,50 @@
+---
+# =============================================================================
+# GLOBAL DEFAULTS — safe, non-proprietary values only.
+# =============================================================================
+# Client-specific values (controller connection, account, secrets, email,
+# reporting) now live OUTSIDE the repo in client_config/<client>.yml and are
+# loaded at run time with `-e @client_config/<client>.yml`. The placeholders
+# below keep the repo runnable/lintable and are overridden by that file.
+# A guard play (playbooks/site.yml) fails fast if the real values weren't loaded.
+
+# ---- Controller connection (PLACEHOLDERS — overridden by client_config) ------
+appd_controller_host: "CHANGEME"
+appd_controller_port: 8090
+appd_controller_ssl_enabled: true
+appd_controller_account_name: "CHANGEME"
+appd_controller_account_access_key: "{{ vault_appd_access_key | default('CHANGEME') }}"
+appd_proxy_host: ""
+appd_proxy_port: ""
+
+# ---- Install layout ---------------------------------------------------------
+# appd_home is set per-OS in inventory (linux=/opt/appdynamics, windows=C:\opt\appdynamics).
+appd_owner: "appdsvc"
+appd_group: "appdsvc"
+
+# ---- API client -------------------------------------------------------------
+appd_api_base_url: "{{ 'https' if appd_controller_ssl_enabled else 'http' }}://{{ appd_controller_host }}:{{ appd_controller_port }}"
+appd_api_client_id: ""
+appd_api_client_secret: ""
+
+# ---- Controller REST API (basic auth) for post-change validation ------------
+# User format: apiuser@accountname. Leave empty to SKIP the controller
+# "is the node reporting?" check in validate.yml. Password belongs in Vault.
+appd_api_user: "{{ vault_appd_api_user | default('') }}"
+appd_api_password: "{{ vault_appd_api_password | default('') }}"
+
+# Proceed despite a preflight skip verdict (deliberate, audited). Use with care.
+appd_force: false
+
+# ---- Behaviour switches -----------------------------------------------------
+appd_backup_before_change: true
+appd_restart_on_config_change: true
+
+# ---- Accountability defaults (overridable in client_config) ------------------
+acct_artifacts_base: "{{ playbook_dir }}/../artifacts"
+acct_report_enabled: true
+email_enabled: false
+email_mode: "on_change"          # always | on_change | on_failure
+email_subject_prefix: "[AppD Automation]"
+client_name: "UNSET"
+contract_id: "UNSET"

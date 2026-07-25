@@ -1,0 +1,5 @@
+---
+# STARTER STUB — implement version swap, then re-apply config.
+- name: Upgrade then reconfigure (DB agent)
+  ansible.builtin.include_tasks: install.yml
+- ansible.builtin.include_tasks: configure.yml

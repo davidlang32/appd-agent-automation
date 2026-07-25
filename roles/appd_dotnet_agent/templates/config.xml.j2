@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed by Ansible (role: appd_dotnet_agent). Manual edits will be overwritten. -->
+<appdynamics-agent>
+  <controller host="{{ appd_controller_host }}"
+              port="{{ appd_controller_port }}"
+              ssl="{{ appd_controller_ssl_enabled | lower }}">
+    <account name="{{ appd_controller_account_name }}"
+             password="{{ appd_controller_account_access_key }}" />
+    <application name="{{ dotnet_agent_application_name }}" />
+  </controller>
+{% if dotnet_agent_instrument_all %}
+  <app-agents>
+    <IIS><automatic enabled="true" /></IIS>
+    <standalone-applications><automatic enabled="true" /></standalone-applications>
+  </app-agents>
+{% else %}
+  <app-agents>
+    <standalone-applications>
+{% for exe in dotnet_agent_instrumented_apps %}
+      <standalone-application executable="{{ exe }}">
+        <tier name="{{ dotnet_agent_tier_name }}" />
+      </standalone-application>
+{% endfor %}
+    </standalone-applications>
+  </app-agents>
+{% endif %}
+</appdynamics-agent>

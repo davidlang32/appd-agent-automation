@@ -1,0 +1,4 @@
+---
+- ansible.builtin.import_playbook: site.yml
+  vars:
+    appd_action: uninstall

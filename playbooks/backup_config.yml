@@ -1,0 +1,31 @@
+---
+# Snapshot all managed config files (no changes). Handy before a maintenance
+# window. Reuses each role's known config paths.
+- name: Backup machine agent configs
+  hosts: machine_agents
+  gather_facts: true
+  roles:
+    - appd_common
+  tasks:
+    - name: Backup controller-info + extension configs
+      ansible.builtin.include_role:
+        name: appd_common
+        tasks_from: backup_file
+      vars:
+        appd_backup_src: "{{ item }}"
+        appd_backup_before_change: true
+      loop: "{{ [machine_agent_controller_info] + (machine_agent_extensions | map(attribute='path') | list) }}"
+
+- name: Backup DB agent vmoptions
+  hosts: db_agents
+  gather_facts: true
+  roles:
+    - appd_common
+  tasks:
+    - name: Backup DatabaseAgentService.vmoptions
+      ansible.builtin.include_role:
+        name: appd_common
+        tasks_from: backup_file
+      vars:
+        appd_backup_src: "{{ db_agent_vmoptions_file }}"
+        appd_backup_before_change: true

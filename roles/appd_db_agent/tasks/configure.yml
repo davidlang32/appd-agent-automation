@@ -1,0 +1,25 @@
+---
+- name: Backup DatabaseAgentService.vmoptions
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_file
+  vars:
+    appd_backup_src: "{{ db_agent_vmoptions_file }}"
+
+- name: Render bin/DatabaseAgentService.vmoptions
+  ansible.builtin.template:
+    src: DatabaseAgentService.vmoptions.j2
+    dest: "{{ db_agent_vmoptions_file }}"
+  become: "{{ not appd_is_windows }}"
+  register: _db_cfg
+  notify: restart db agent
+
+- name: Record accountability snapshot
+  ansible.builtin.include_role:
+    name: appd_accountability
+    tasks_from: record
+  vars:
+    acct_agent_type: db
+    acct_changed: "{{ _db_cfg is changed }}"
+    acct_files:
+      - "{{ db_agent_vmoptions_file }}"

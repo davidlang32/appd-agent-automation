@@ -1,0 +1,7 @@
+---
+# Upgrade = install new version artifacts, then re-apply config.
+# Each role's upgrade.yml is a stub to be fleshed out with your artifact source
+# and version-pinning strategy (symlink swap on Linux, MSI upgrade on Windows).
+- ansible.builtin.import_playbook: site.yml
+  vars:
+    appd_action: upgrade

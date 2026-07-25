@@ -1,0 +1,7 @@
+---
+# Install with: ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.windows      # win_service, win_template, win_environment, win_find...
+  - name: community.general    # mail (email notifications), archive, misc helpers
+  - name: community.windows    # extra Windows modules if needed
+  - name: ansible.posix        # profile_tasks callback (per-task timing in the log)

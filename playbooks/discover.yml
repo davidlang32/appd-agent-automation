@@ -1,0 +1,32 @@
+---
+# Inventory what is actually installed under the AppDynamics home on each host,
+# regardless of OS. Useful to reconcile reality against the Controller's
+# Agent Management export.
+- name: Discover installed AppDynamics agents
+  hosts: all
+  gather_facts: true
+  roles:
+    - appd_common          # sets appd_is_windows + appd_home_resolved
+  tasks:
+    - name: List agent dirs (Linux)
+      ansible.builtin.find:
+        paths: "{{ appd_home_resolved }}"
+        file_type: directory
+        depth: 1
+      register: _lin_dirs
+      when: not appd_is_windows
+
+    - name: List agent dirs (Windows)
+      ansible.windows.win_find:
+        paths: "{{ appd_home_resolved }}"
+        file_type: directory
+        recurse: false
+      register: _win_dirs
+      when: appd_is_windows
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} ({{ 'Windows' if appd_is_windows else 'Linux' }}):
+          {{ (_win_dirs.files if appd_is_windows else _lin_dirs.files)
+             | map(attribute='path') | list }}

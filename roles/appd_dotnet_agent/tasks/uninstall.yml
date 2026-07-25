@@ -1,0 +1,8 @@
+---
+# STARTER STUB
+- name: Stop coordinator service before removal
+  ansible.windows.win_service:
+    name: "{{ dotnet_agent_coordinator_service }}"
+    state: stopped
+  ignore_errors: true
+# TODO: uninstall the .NET agent MSI (ansible.windows.win_package state=absent)

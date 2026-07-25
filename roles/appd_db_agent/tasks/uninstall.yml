@@ -1,0 +1,23 @@
+---
+# STARTER STUB
+- name: Stop DB agent service before removal
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ db_agent_service_name }}"
+    appd_service_state: stopped
+  ignore_errors: true
+
+- name: Remove DB agent home (Linux)
+  ansible.builtin.file:
+    path: "{{ db_agent_home }}"
+    state: absent
+  become: true
+  when: not appd_is_windows
+
+- name: Remove DB agent home (Windows)
+  ansible.windows.win_file:
+    path: "{{ db_agent_home }}"
+    state: absent
+  when: appd_is_windows

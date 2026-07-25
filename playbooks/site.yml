@@ -1,0 +1,83 @@
+---
+# Master entry point. Runs the chosen action across every agent type, on a
+# mixed Linux/Windows inventory, in a single pass, bracketed by the
+# accountability layer (run log + HTML report + optional email).
+#
+# Usage:
+#   # 1) put client values in a gitignored file (copied from the example):
+#   cp client_config/example.client.yml client_config/active.yml   # then edit
+#   # 2) run (active.yml is the default; or pass another with client_config_file):
+#   ansible-playbook playbooks/site.yml -e appd_action=configure
+#   ansible-playbook playbooks/site.yml -e appd_action=configure --check --diff
+#   ansible-playbook playbooks/site.yml -e client_config_file=client_config/acme.yml -e appd_action=configure
+#
+# appd_action: configure (default) | install | upgrade | uninstall
+
+# --------------------------------------------------------------------------
+# START - create run dir, write metadata, fail fast if client config missing
+# --------------------------------------------------------------------------
+- name: "Accountability :: start"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  tasks:
+    - name: Initialize run
+      ansible.builtin.include_role:
+        name: appd_accountability
+        tasks_from: start
+
+# --------------------------------------------------------------------------
+# AGENTS
+# --------------------------------------------------------------------------
+- name: Java APM agents
+  hosts: java_agents
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  roles:
+    - appd_java_agent
+
+- name: NET agents
+  hosts: dotnet_agents
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  roles:
+    - appd_dotnet_agent
+
+- name: Machine agents
+  hosts: machine_agents
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  roles:
+    - appd_machine_agent
+
+- name: Database agents
+  hosts: db_agents
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  roles:
+    - appd_db_agent
+
+# --------------------------------------------------------------------------
+# FINISH - build HTML report, archive log, send email (if enabled)
+# --------------------------------------------------------------------------
+- name: "Accountability :: report + notify"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  tasks:
+    - name: Build report
+      ansible.builtin.include_role:
+        name: appd_accountability
+        tasks_from: report
+    - name: Send notification
+      ansible.builtin.include_role:
+        name: appd_accountability
+        tasks_from: notify

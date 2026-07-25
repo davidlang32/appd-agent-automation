@@ -1,0 +1,19 @@
+# Managed by Ansible (role: appd_machine_agent). Startup params (JAVA_OPTS)
+# live in /etc/sysconfig/{{ machine_agent_service_name }} and are preserved
+# across upgrades.
+[Unit]
+Description=AppDynamics Machine Agent
+After=network.target
+
+[Service]
+Type=simple
+User={{ appd_owner }}
+Group={{ appd_group }}
+EnvironmentFile=-/etc/sysconfig/{{ machine_agent_service_name }}
+WorkingDirectory={{ machine_agent_home }}
+ExecStart={{ machine_agent_home }}/jre/bin/java $JAVA_OPTS -jar {{ machine_agent_home }}/machineagent.jar
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

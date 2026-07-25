@@ -1,0 +1,41 @@
+---
+# Runs ONCE on localhost at the end of a run. Aggregates the per-host JSON
+# records into a single HTML report, and archives the Ansible log alongside it.
+- name: Find per-host records
+  ansible.builtin.find:
+    paths: "{{ acct_run_dir }}"
+    patterns: "host-*.json"
+  register: _rec_files
+
+- name: Load records
+  ansible.builtin.set_fact:
+    acct_records: "{{ acct_records | default([]) + [ lookup('file', item.path) | from_json ] }}"
+  loop: "{{ _rec_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Compute summary counts
+  ansible.builtin.set_fact:
+    acct_total_hosts: "{{ (acct_records | default([]) | map(attribute='host') | unique | list) | length }}"
+    acct_total_records: "{{ acct_records | default([]) | length }}"
+    acct_changed_count: "{{ acct_records | default([]) | selectattr('changed') | list | length }}"
+
+- name: Render HTML report
+  ansible.builtin.template:
+    src: report.html.j2
+    dest: "{{ acct_report_file }}"
+    mode: "0640"
+  when: acct_report_enabled | bool
+
+- name: Archive Ansible log into run dir (best effort)
+  ansible.builtin.copy:
+    src: "{{ acct_artifacts_base }}/ansible-latest.log"
+    dest: "{{ acct_run_dir }}/ansible.log"
+    remote_src: true
+  failed_when: false
+
+- name: Report location
+  ansible.builtin.debug:
+    msg: >-
+      Report: {{ acct_report_file }} |
+      hosts={{ acct_total_hosts }} changed_records={{ acct_changed_count }}

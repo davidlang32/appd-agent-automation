@@ -1,0 +1,46 @@
+---
+- name: Ensure .NET agent config dir exists
+  ansible.windows.win_file:
+    path: "{{ dotnet_agent_config_dir }}"
+    state: directory
+
+- name: Backup .NET config.xml
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_file
+  vars:
+    appd_backup_src: "{{ dotnet_agent_config_file }}"
+
+- name: Render .NET config.xml
+  ansible.windows.win_template:
+    src: config.xml.j2
+    dest: "{{ dotnet_agent_config_file }}"
+  register: _dotnet_cfg
+  notify: restart dotnet coordinator
+
+# .NET Core / 5+ instrumentation is driven by environment variables rather than
+# only config.xml. Set them machine-wide so newly started processes pick them up.
+- name: Set .NET profiler environment variables (machine scope)
+  ansible.windows.win_environment:
+    level: machine
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+  loop:
+    - { name: "CORECLR_ENABLE_PROFILING", value: "1" }
+    - { name: "CORECLR_PROFILER", value: "{39AEABC1-56A5-405F-B8E7-C3668490DB4A}" }
+    - { name: "COR_ENABLE_PROFILING", value: "1" }
+    - { name: "COR_PROFILER", value: "AppDynamics.AgentProfiler" }
+  when: dotnet_agent_enable_profiler_env | bool
+  register: _dotnet_env
+  notify: restart dotnet coordinator
+
+- name: Record accountability snapshot
+  ansible.builtin.include_role:
+    name: appd_accountability
+    tasks_from: record
+  vars:
+    acct_agent_type: dotnet
+    acct_changed: "{{ (_dotnet_cfg is changed) or (_dotnet_env is changed) }}"
+    acct_files:
+      - "{{ dotnet_agent_config_file }}"

@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# FUTURE IDEA — agent log collection  (NOT YET IMPLEMENTED)
+# =============================================================================
+# Goal: run one command and pull agent log files from every server, OS-agnostic.
+#
+# Open design questions to settle before building (see README "Future ideas"):
+#   - Where do collected logs land? (control node dir / S3 / artifact store)
+#   - Time-window filter, or whole log dir? Compress per host?
+#   - Redaction of access keys before logs leave the host?
+#
+# Sketch of the eventual flow:
+#   1. appd_common -> detect OS, resolve <appd_home>/.../logs paths per agent
+#   2. archive logs on the host (community.general.archive / win_zip-equivalent)
+#   3. fetch to control node:  ansible.builtin.fetch (Linux) / win equivalents
+#
+# Left as a stub on purpose.
+- name: Collect AppDynamics agent logs (placeholder)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Not implemented yet
+      ansible.builtin.debug:
+        msg: "Log collection is on the future-ideas list — see README."

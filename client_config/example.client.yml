@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# CLIENT CONFIG TEMPLATE  (portable, per-contract)
+# =============================================================================
+# Everything proprietary to a single client lives in THIS file only. Copy it to
+# a real, gitignored file and load it at run time:
+#
+#   cp client_config/example.client.yml client_config/acme.yml
+#   # edit acme.yml with the client's real values, then:
+#   ansible-playbook playbooks/site.yml -e @client_config/acme.yml -e appd_action=configure
+#
+# Because nothing client-specific is committed, you can port this whole project
+# to a different contract by handing over the repo WITHOUT this file. The repo's
+# group_vars hold only safe, non-proprietary defaults + placeholders.
+#
+# Secrets (access keys, SMTP password) should still go through Ansible Vault even
+# inside this file — see the *_vault references and inventory/group_vars/vault.yml.example.
+# =============================================================================
+
+# ---- Client identity (used in reports / email subjects) ---------------------
+client_name: "ACME Corp"
+contract_id: "CONTRACT-0000"
+
+# ---- Controller connection (was in group_vars; now external & portable) -----
+appd_controller_host: "controller.acme.example.com"
+appd_controller_port: 8090
+appd_controller_ssl_enabled: true
+appd_controller_account_name: "acme-prod"
+appd_controller_account_access_key: "{{ vault_appd_access_key }}"   # keep in Vault
+
+appd_proxy_host: ""
+appd_proxy_port: ""
+
+# ---- Controller API client (for non-Ansible use too) ------------------------
+appd_api_client_id: "{{ vault_appd_api_client_id | default('') }}"
+appd_api_client_secret: "{{ vault_appd_api_client_secret | default('') }}"
+
+# ---- Controller REST API (basic auth) — post-change validation --------------
+# Enables validate.yml's "is the node reporting to the controller?" check.
+# User format: apiuser@accountname. Leave empty to skip that check. Vault the pw.
+appd_api_user: "{{ vault_appd_api_user | default('') }}"
+appd_api_password: "{{ vault_appd_api_password | default('') }}"
+
+# ---- Accountability: logging + reporting ------------------------------------
+# Where run artifacts (log + HTML report) are written on the control node.
+acct_artifacts_base: "{{ playbook_dir }}/../artifacts"
+acct_report_enabled: true
+
+# ---- Accountability: email --------------------------------------------------
+# Built but DISABLED by default — flip email_enabled to true once you have SMTP
+# credentials. Trigger modes: always | on_change | on_failure
+email_enabled: false
+email_mode: "on_change"
+email_smtp_host: "smtp.example.com"
+email_smtp_port: 587
+email_smtp_starttls: true
+email_smtp_username: "appd-automation@acme.example.com"
+email_smtp_password: "{{ vault_email_smtp_password | default('') }}"   # Vault
+email_from: "appd-automation@acme.example.com"
+email_to:
+  - "platform-team@acme.example.com"
+email_subject_prefix: "[AppD Automation]"

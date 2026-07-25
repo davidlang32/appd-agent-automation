@@ -1,0 +1,7 @@
+---
+# Copy to vault.yml and encrypt:  ansible-vault encrypt inventory/group_vars/vault.yml
+# Never commit the decrypted file.
+vault_appd_access_key: "REPLACE_WITH_CONTROLLER_ACCESS_KEY"
+vault_appd_api_client_id: "REPLACE_WITH_API_CLIENT_ID"
+vault_appd_api_client_secret: "REPLACE_WITH_API_CLIENT_SECRET"
+vault_email_smtp_password: "REPLACE_WITH_SMTP_PASSWORD"

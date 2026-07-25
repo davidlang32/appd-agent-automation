@@ -1,0 +1,18 @@
+{
+  "host": "{{ inventory_hostname }}",
+  "os": "{{ 'windows' if appd_is_windows else 'linux' }}",
+  "agent_type": "{{ acct_agent_type }}",
+  "action": "{{ appd_action | default('configure') }}",
+  "changed": {{ (acct_changed | default(false)) | lower }},
+  "timestamp_utc": "{{ ansible_date_time.iso8601 | default('') }}",
+  "files": [
+{% for r in _acct_stat_results %}
+    {
+      "path": "{{ r.item | replace('\\', '\\\\') }}",
+      "exists": {{ (r.stat.exists | default(false)) | lower }},
+      "checksum": "{{ r.stat.checksum | default('') }}",
+      "mtime": "{{ r.stat.mtime | default(r.stat.lastwritetime) | default('') }}"
+    }{{ "," if not loop.last else "" }}
+{% endfor %}
+  ]
+}

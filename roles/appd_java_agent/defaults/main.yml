@@ -1,0 +1,5 @@
+---
+# Install location of the Java agent (version dir lives under here as <ver>/)
+java_agent_home: "{{ appd_home_resolved }}{{ appd_path_sep }}appagent"
+java_agent_conf_dir: "{{ java_agent_home }}{{ appd_path_sep }}conf"
+java_agent_controller_info: "{{ java_agent_conf_dir }}{{ appd_path_sep }}controller-info.xml"

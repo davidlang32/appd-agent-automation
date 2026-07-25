@@ -1,0 +1,35 @@
+---
+# Included by each agent role's configure.yml. Captures a per-host snapshot of
+# the managed config files (exists / checksum / mtime) plus whether this run
+# changed anything, and writes ONE json file per host into the run dir.
+# Per-host files (not a shared append) avoid corruption under parallel forks.
+#
+# Caller provides:
+#   acct_agent_type   e.g. "java" | "dotnet" | "machine" | "db"
+#   acct_files        list of absolute managed-file paths on the target
+#   acct_changed      bool — did this run change anything for this agent
+- name: "Stat managed files (Linux) [{{ acct_agent_type }}]"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    checksum_algorithm: sha1
+  loop: "{{ acct_files }}"
+  register: _acct_stat_lin
+  when: not appd_is_windows
+
+- name: "Stat managed files (Windows) [{{ acct_agent_type }}]"
+  ansible.windows.win_stat:
+    path: "{{ item }}"
+  loop: "{{ acct_files }}"
+  register: _acct_stat_win
+  when: appd_is_windows
+
+- name: Normalize stat results
+  ansible.builtin.set_fact:
+    _acct_stat_results: "{{ (_acct_stat_win.results if appd_is_windows else _acct_stat_lin.results) }}"
+
+- name: Write per-host accountability record (to control node)
+  ansible.builtin.template:
+    src: record.json.j2
+    dest: "{{ hostvars['localhost'].acct_run_dir }}/host-{{ inventory_hostname }}-{{ acct_agent_type }}.json"
+    mode: "0640"
+  delegate_to: localhost

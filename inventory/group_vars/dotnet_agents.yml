@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# .NET AGENT  (Windows-only in practice)
+# =============================================================================
+dotnet_agent_version: "24.5.0"
+
+# .NET Framework agent uses config.xml at:
+#   %ProgramData%\AppDynamics\DotNetAgent\Config\config.xml
+dotnet_agent_config_dir: 'C:\ProgramData\AppDynamics\DotNetAgent\Config'
+
+dotnet_agent_application_name: "MyDotNetApp"
+dotnet_agent_tier_name: "MyDotNetTier"
+dotnet_agent_node_name: "{{ inventory_hostname_short }}"
+
+# Profiler / instrumentation environment variables (set machine-wide).
+# .NET Core/5+ uses CORECLR_* ; .NET Framework uses COR_* .
+dotnet_agent_enable_profiler_env: true
+
+# Which apps/services to instrument (auto-instrument all if empty)
+dotnet_agent_instrument_all: true
+dotnet_agent_instrumented_apps: []
+  # - w3wp.exe
+  # - MyService.exe

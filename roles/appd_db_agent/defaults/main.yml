@@ -1,0 +1,5 @@
+---
+db_agent_home: "{{ appd_home_resolved }}{{ appd_path_sep }}db-agent"
+db_agent_bin_dir: "{{ db_agent_home }}{{ appd_path_sep }}bin"
+db_agent_vmoptions_file: "{{ db_agent_bin_dir }}{{ appd_path_sep }}DatabaseAgentService.vmoptions"
+db_agent_service_name: "appdynamics-db-agent"

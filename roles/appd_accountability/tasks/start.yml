@@ -1,0 +1,52 @@
+---
+# Runs ONCE on localhost at the very start of a run. Creates the timestamped
+# artifacts dir and records who/what/when/where for the audit trail.
+- name: Guard — client_config must be loaded (controller host set)
+  ansible.builtin.assert:
+    that:
+      - appd_controller_host is defined
+      - appd_controller_host != "CHANGEME"
+    fail_msg: >-
+      Controller connection not loaded. Pass your client file, e.g.
+      -e @client_config/<client>.yml
+    quiet: true
+
+- name: Establish run id and directories
+  ansible.builtin.set_fact:
+    acct_run_id: "{{ ansible_date_time.iso8601_basic_short }}"
+    acct_run_dir: "{{ acct_artifacts_base }}/{{ ansible_date_time.iso8601_basic_short }}"
+
+- name: Create run artifacts directory
+  ansible.builtin.file:
+    path: "{{ acct_run_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Write run metadata
+  ansible.builtin.copy:
+    dest: "{{ acct_run_dir }}/run_metadata.json"
+    mode: "0640"
+    content: |
+      {
+        "run_id": "{{ acct_run_id }}",
+        "client_name": "{{ client_name }}",
+        "contract_id": "{{ contract_id }}",
+        "action": "{{ appd_action | default('configure') }}",
+        "started_utc": "{{ ansible_date_time.iso8601 }}",
+        "run_by": "{{ lookup('env','USER') | default(lookup('env','USERNAME'), true) }}",
+        "control_node": "{{ ansible_hostname }}",
+        "controller_host": "{{ appd_controller_host }}",
+        "check_mode": {{ ansible_check_mode | lower }},
+        "limit": "{{ ansible_limit | default('all') }}"
+      }
+
+- name: Initialize empty results file
+  ansible.builtin.copy:
+    dest: "{{ acct_results_file }}"
+    content: ""
+    force: false
+    mode: "0640"
+
+- name: Announce run dir
+  ansible.builtin.debug:
+    msg: "Accountability run {{ acct_run_id }} -> {{ acct_run_dir }}"

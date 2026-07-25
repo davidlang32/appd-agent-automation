@@ -1,0 +1,124 @@
+---
+# Fresh install: deploy the bundle from the control node (checksum verified in
+# preflight), set up the service + startup params, render config, start.
+
+# ---------------------------------------------------------------- Linux -----
+- name: Install (Linux)
+  become: true
+  when: not appd_is_windows
+  block:
+    - name: Ensure service group
+      ansible.builtin.group:
+        name: "{{ appd_group }}"
+        system: true
+
+    - name: Ensure service user
+      ansible.builtin.user:
+        name: "{{ appd_owner }}"
+        group: "{{ appd_group }}"
+        system: true
+        shell: /sbin/nologin
+        create_home: false
+
+    - name: Ensure agent home
+      ansible.builtin.file:
+        path: "{{ machine_agent_home }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract the agent bundle from the control node
+      ansible.builtin.unarchive:
+        src: "{{ machine_agent_bundle_dir }}/{{ machine_agent_bundle_zip }}"
+        dest: "{{ machine_agent_home }}"
+
+    - name: Write startup parameters (sysconfig)
+      ansible.builtin.template:
+        src: machine-agent-sysconfig.j2
+        dest: "/etc/sysconfig/{{ machine_agent_service_name }}"
+        mode: "0640"
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: appdynamics-machine-agent.service.j2
+        dest: "/etc/systemd/system/{{ machine_agent_service_name }}.service"
+        mode: "0644"
+
+    - name: Optional custom truststore
+      ansible.builtin.copy:
+        src: "{{ machine_agent_cacerts_src }}"
+        dest: "{{ machine_agent_conf_dir }}/cacerts.jks"
+        mode: "0640"
+      when: machine_agent_cacerts_src | default('') | length > 0
+
+    - name: Write version marker
+      ansible.builtin.copy:
+        content: "{{ machine_agent_version }}\n"
+        dest: "{{ machine_agent_marker_file }}"
+        mode: "0644"
+
+# -------------------------------------------------------------- Windows -----
+- name: Install (Windows)
+  when: appd_is_windows
+  block:
+    - name: Ensure agent home
+      ansible.windows.win_file:
+        path: "{{ machine_agent_home }}"
+        state: directory
+
+    - name: Copy bundle to host
+      ansible.windows.win_copy:
+        src: "{{ machine_agent_bundle_dir }}/{{ machine_agent_bundle_zip }}"
+        dest: "C:\\Windows\\Temp\\{{ machine_agent_bundle_zip }}"
+
+    - name: Extract the agent bundle
+      ansible.windows.win_shell: >-
+        Expand-Archive -Path 'C:\Windows\Temp\{{ machine_agent_bundle_zip }}'
+        -DestinationPath '{{ machine_agent_home }}' -Force
+
+    - name: Remove copied bundle
+      ansible.windows.win_file:
+        path: "C:\\Windows\\Temp\\{{ machine_agent_bundle_zip }}"
+        state: absent
+
+    - name: Optional custom truststore
+      ansible.windows.win_copy:
+        src: "{{ machine_agent_cacerts_src }}"
+        dest: "{{ machine_agent_conf_dir }}\\cacerts.jks"
+      when: machine_agent_cacerts_src | default('') | length > 0
+
+    - name: Write version marker
+      ansible.windows.win_copy:
+        content: "{{ machine_agent_version }}"
+        dest: "{{ machine_agent_marker_file }}"
+
+    - name: Register the Windows service
+      ansible.windows.win_shell: cscript.exe //nologo InstallService.vbs
+      args:
+        chdir: "{{ machine_agent_home }}"
+      changed_when: true
+
+# --------------------------------------------------------------- config -----
+- name: Render config (controller-info + extensions)
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Fix ownership (Linux)
+  ansible.builtin.file:
+    path: "{{ machine_agent_home }}"
+    state: directory
+    owner: "{{ appd_owner }}"
+    group: "{{ appd_group }}"
+    recurse: true
+  become: true
+  when: not appd_is_windows
+
+- name: Enable and start the service
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ machine_agent_service_name }}"
+    appd_service_state: started
+
+- name: Record install result
+  ansible.builtin.set_fact:
+    machine_agent_result: "INSTALLED {{ machine_agent_version }} (pending phase-2 validation)"

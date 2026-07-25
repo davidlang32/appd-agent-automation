@@ -1,0 +1,7 @@
+# AppDynamics Machine Agent startup parameters — managed by Ansible.
+# PRESERVED across upgrades: edit here (or set machine_agent_java_opts in
+# group_vars), not in the unit file.
+#
+# Example — raise the per-agent metric cap:
+#   JAVA_OPTS="-Xms64m -Xmx256m -Dappdynamics.agent.maxMetrics=450"
+JAVA_OPTS="{{ machine_agent_java_opts }}"

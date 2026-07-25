@@ -1,0 +1,78 @@
+---
+machine_agent_home: "{{ appd_home_resolved }}{{ appd_path_sep }}machine-agent"
+machine_agent_conf_dir: "{{ machine_agent_home }}{{ appd_path_sep }}conf"
+machine_agent_controller_info: "{{ machine_agent_conf_dir }}{{ appd_path_sep }}controller-info.xml"
+machine_agent_ext_dir: "{{ machine_agent_home }}{{ appd_path_sep }}extensions"
+
+# Map each managed extension to its on-disk config file. Iterated in configure.yml.
+machine_agent_extensions:
+  - key: machine_agent_servermonitoring
+    path: "{{ machine_agent_ext_dir }}{{ appd_path_sep }}ServerMonitoring{{ appd_path_sep }}conf{{ appd_path_sep }}ServerMonitoring.yml"
+  - key: machine_agent_dockermonitoring
+    path: "{{ machine_agent_ext_dir }}{{ appd_path_sep }}DockerMonitoring{{ appd_path_sep }}conf{{ appd_path_sep }}DockerMonitoring.yml"
+  - key: machine_agent_crashguard
+    path: "{{ machine_agent_ext_dir }}{{ appd_path_sep }}CrashGuard{{ appd_path_sep }}conf{{ appd_path_sep }}crashGuardConfig.yml"
+  - key: machine_agent_agentserver
+    path: "{{ machine_agent_ext_dir }}{{ appd_path_sep }}AgentServer{{ appd_path_sep }}conf{{ appd_path_sep }}agentServerConfig.yml"
+
+machine_agent_service_name: "appdynamics-machine-agent"
+
+# =============================================================================
+# LIFECYCLE (install / upgrade / uninstall) — added for full agent lifecycle.
+# =============================================================================
+
+# Version marker written on install/upgrade; read in preflight for idempotency.
+machine_agent_marker_file: "{{ machine_agent_home }}{{ appd_path_sep }}.appd-managed-version"
+
+# ---- Bundle staged on the CONTROL NODE (checksum verified in preflight) ------
+machine_agent_bundle_dir: "{{ playbook_dir }}/../files"
+machine_agent_bundle_zip: >-
+  {{ ('machineagent-bundle-64bit-windows-' ~ machine_agent_version ~ '.zip')
+     if appd_is_windows else
+     ('machineagent-bundle-64bit-linux-' ~ machine_agent_version ~ '.zip') }}
+machine_agent_bundle_sha256: ""      # pin to enforce integrity; "" = skip
+
+# ---- Startup parameters (Linux; PRESERVED across upgrades) -------------------
+# Example: "-Xms64m -Xmx256m -Dappdynamics.agent.maxMetrics=450"
+machine_agent_java_opts: "-Xms64m -Xmx256m"
+
+# Optional custom truststore staged on the control node ("" = skip)
+machine_agent_cacerts_src: ""
+
+# ---- Preserved across an upgrade (relative to the agent home) ----------------
+# Rendered-from-vars files (controller-info.xml, extension YAMLs) survive by
+# being re-rendered; these NON-rendered artifacts are carried from the old
+# install. controller-info.xml is listed so the ARCHIVE captures it (scrubbed).
+machine_agent_preserve_files:
+  - conf/controller-info.xml
+  - conf/cacerts.jks
+  - conf/logging/log4j.xml
+
+# Subdirs whose non-stock entries are custom and are carried over / archived.
+machine_agent_custom_dirs:
+  - monitors
+  - extensions
+
+# Names inside those dirs that ship in the bundle (skip as "stock").
+machine_agent_stock_extensions:
+  - analytics-agent
+  - ServerMonitoring
+  - DockerMonitoring
+  - CrashGuard
+  - AgentServer
+  - HardwareMonitor
+  - JavaHardwareMonitor
+
+# ---- Backup / archive on the target ------------------------------------------
+machine_agent_backup_dir: "{{ appd_home_resolved }}{{ appd_path_sep }}config-archive"
+
+# ---- Preflight ---------------------------------------------------------------
+machine_agent_min_free_mb: 1024
+
+# ---- Validation (playbooks/validate.yml phase 2) -----------------------------
+machine_agent_log_success_patterns:
+  - "Started AppDynamics Machine Agent Successfully"
+machine_agent_availability_application: "Server & Infrastructure Monitoring"
+machine_agent_availability_metric_path: "Application Infrastructure Performance|Root|Individual Nodes|{{ machine_agent_node_name }}|Agent|Machine|Availability"
+machine_agent_validate_retries: 20
+machine_agent_validate_delay: 30

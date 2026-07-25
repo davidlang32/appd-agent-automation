@@ -1,0 +1,3 @@
+---
+dotnet_agent_config_file: "{{ dotnet_agent_config_dir }}\\config.xml"
+dotnet_agent_coordinator_service: "AppDynamics.Agent.Coordinator_service"

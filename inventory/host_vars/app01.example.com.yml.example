@@ -1,0 +1,6 @@
+---
+# Example per-host overrides. Copy to <fqdn>.yml (drop .example) for real hosts.
+java_agent_application_name: "Payments"
+java_agent_tier_name: "payments-api"
+machine_agent_application_name: "Payments"
+machine_agent_tier_name: "payments-api"

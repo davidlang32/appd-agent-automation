@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# MACHINE AGENT  (+ bundled extensions)
+# =============================================================================
+machine_agent_version: "24.5.0"
+
+# Sim mode / host identity
+machine_agent_sim_enabled: true
+machine_agent_unique_host_id: "{{ inventory_hostname }}"
+
+# Tie the machine agent to an APM tier/node, or run standalone (server-only).
+machine_agent_application_name: ""   # optional
+machine_agent_tier_name: ""          # optional
+machine_agent_node_name: "{{ inventory_hostname_short }}"
+
+# ---- Extensions: enable + drive their YAML config ---------------------------
+# Each block below is rendered to the corresponding file under
+#   <machine_agent_home>/extensions/<Ext>/conf/<file>.yml
+# Set enabled:false to leave the extension's config untouched.
+
+# extensions/ServerMonitoring/conf/ServerMonitoring.yml
+machine_agent_servermonitoring:
+  enabled: true
+  config:
+    enableServerMonitoring: true
+    # metrics collection interval, process selectors, etc.
+    # add keys here exactly as they appear in ServerMonitoring.yml
+
+# extensions/DockerMonitoring/conf/DockerMonitoring.yml
+machine_agent_dockermonitoring:
+  enabled: false
+  config:
+    enableDockerMonitoring: false
+    # dockerSocket: "unix:///var/run/docker.sock"
+
+# extensions/CrashGuard/conf/crashGuardConfig.yml
+machine_agent_crashguard:
+  enabled: true
+  config:
+    enableCrashGuard: true
+    # thresholds / actions
+
+# extensions/AgentServer/conf/agentServerConfig.yml
+machine_agent_agentserver:
+  enabled: true
+  config:
+    # agent server bind / port / TLS settings
+    port: 9090

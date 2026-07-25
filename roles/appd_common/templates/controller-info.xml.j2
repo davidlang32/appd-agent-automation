@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by Ansible (role: appd_common). Manual edits will be overwritten. -->
+<controller-info>
+    <controller-host>{{ appd_controller_host }}</controller-host>
+    <controller-port>{{ appd_controller_port }}</controller-port>
+    <controller-ssl-enabled>{{ appd_controller_ssl_enabled | lower }}</controller-ssl-enabled>
+    <account-name>{{ appd_controller_account_name }}</account-name>
+    <account-access-key>{{ appd_controller_account_access_key }}</account-access-key>
+    <application-name>{{ ci_application_name | default('') }}</application-name>
+    <tier-name>{{ ci_tier_name | default('') }}</tier-name>
+    <node-name>{{ ci_node_name | default(inventory_hostname_short) }}</node-name>
+{% if ci_unique_host_id is defined and ci_unique_host_id %}
+    <unique-host-id>{{ ci_unique_host_id }}</unique-host-id>
+{% endif %}
+{% if ci_sim_enabled is defined %}
+    <sim-enabled>{{ ci_sim_enabled | lower }}</sim-enabled>
+{% endif %}
+{% if appd_proxy_host %}
+    <proxy-host>{{ appd_proxy_host }}</proxy-host>
+    <proxy-port>{{ appd_proxy_port }}</proxy-port>
+{% endif %}
+</controller-info>

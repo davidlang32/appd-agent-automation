@@ -1,0 +1,4 @@
+---
+# Dispatcher. Select with -e appd_action=install|configure|...
+- name: "Java agent :: {{ appd_action | default('configure') }}"
+  ansible.builtin.include_tasks: "{{ appd_action | default('configure') }}.yml"

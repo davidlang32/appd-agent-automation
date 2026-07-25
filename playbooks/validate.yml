@@ -1,0 +1,91 @@
+---
+# Post-change health check. Run this AFTER site.yml so agents have had time to
+# start and register (machine agents take minutes). For machine agents this now
+# confirms three things in order: service active -> startup line in the agent
+# log -> the CONTROLLER reports the node's availability metric (retried).
+#
+# The controller check uses the existing AppDynamics Controller REST API; set
+# appd_api_user / appd_api_password (client_config, from vault) to enable it —
+# leave them empty to skip it. This is the deferred "phase 2" from the design.
+
+- name: Validate machine agents
+  hosts: machine_agents
+  gather_facts: true
+  vars_files:
+    - "{{ client_config_file | default(playbook_dir ~ '/../client_config/active.yml') }}"
+  roles:
+    - appd_common
+  tasks:
+    - name: Check machine agent service (Linux)
+      ansible.builtin.command: "systemctl is-active {{ machine_agent_service_name }}"
+      register: _svc
+      changed_when: false
+      failed_when: false
+      when: not appd_is_windows
+
+    - name: Check machine agent service (Windows)
+      ansible.windows.win_service_info:
+        name: "{{ machine_agent_service_name }}"
+      register: _svc_win
+      when: appd_is_windows
+
+    - name: Report machine agent service status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _svc.stdout | default(_svc_win.services[0].state | default('unknown')) }}"
+
+    - name: Startup line in the agent log (Linux)
+      ansible.builtin.shell: grep -E "{{ machine_agent_log_success_patterns | join('|') }}" "{{ machine_agent_home }}/logs/machine-agent.log"
+      register: _ma_log
+      changed_when: false
+      failed_when: false
+      when: not appd_is_windows
+
+    - name: Confirm the controller sees the node reporting (availability metric)
+      ansible.builtin.uri:
+        url: >-
+          {{ appd_api_base_url }}/controller/rest/applications/{{ machine_agent_availability_application | urlencode }}/metric-data?metric-path={{ machine_agent_availability_metric_path | urlencode }}&time-range-type=BEFORE_NOW&duration-in-mins=15&output=JSON
+        method: GET
+        url_username: "{{ appd_api_user }}"
+        url_password: "{{ appd_api_password }}"
+        force_basic_auth: true
+        return_content: true
+        status_code: 200
+      register: _ma_metric
+      delegate_to: localhost
+      become: false
+      retries: "{{ machine_agent_validate_retries }}"
+      delay: "{{ machine_agent_validate_delay }}"
+      until: >-
+        (_ma_metric.json | default([]) | length > 0)
+        and (_ma_metric.json[0].metricValues | default([]) | length > 0)
+      when: appd_api_user | default('') | length > 0
+
+    - name: Report controller reporting status
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {% if appd_api_user | default('') | length == 0 %}controller check skipped (no appd_api_user set)
+          {% elif (_ma_metric.json | default([]) | length > 0) and (_ma_metric.json[0].metricValues | default([]) | length > 0) %}REPORTING to controller
+          {% else %}NOT yet reporting — investigate
+          {% endif %}
+
+- name: Validate DB agents
+  hosts: db_agents
+  gather_facts: true
+  roles:
+    - appd_common
+  tasks:
+    - name: Check db agent service (Linux)
+      ansible.builtin.command: "systemctl is-active appdynamics-db-agent"
+      register: _dbsvc
+      changed_when: false
+      failed_when: false
+      when: not appd_is_windows
+    - name: Check db agent service (Windows)
+      ansible.windows.win_service_info:
+        name: "appdynamics-db-agent"
+      register: _dbsvc_win
+      when: appd_is_windows
+    - name: Report db agent status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _dbsvc.stdout | default(_dbsvc_win.services[0].state | default('unknown')) }}"

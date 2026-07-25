@@ -1,0 +1,34 @@
+---
+- name: Backup existing controller-info.xml
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_file
+  vars:
+    appd_backup_src: "{{ java_agent_controller_info }}"
+
+- name: Render Java agent controller-info.xml
+  ansible.builtin.template:
+    src: ../../appd_common/templates/controller-info.xml.j2
+    dest: "{{ java_agent_controller_info }}"
+  vars:
+    ci_application_name: "{{ java_agent_application_name }}"
+    ci_tier_name: "{{ java_agent_tier_name }}"
+    ci_node_name: "{{ java_agent_node_name }}"
+    ci_unique_host_id: "{{ java_agent_unique_host_id }}"
+  become: "{{ not appd_is_windows }}"
+  register: _java_cfg
+  notify: java agent changed
+
+# Java APM config is applied when the instrumented JVM restarts. We do not
+# bounce customer app servers automatically; the handler only records that a
+# restart is required so operators can schedule it.
+
+- name: Record accountability snapshot
+  ansible.builtin.include_role:
+    name: appd_accountability
+    tasks_from: record
+  vars:
+    acct_agent_type: java
+    acct_changed: "{{ _java_cfg is changed }}"
+    acct_files:
+      - "{{ java_agent_controller_info }}"

@@ -1,0 +1,24 @@
+# ---- Client-specific / proprietary config (NEVER commit) --------------------
+# Everything under client_config/ except the example template.
+client_config/*.yml
+!client_config/example.client.yml
+
+# Vault & secrets
+inventory/group_vars/vault.yml
+.vault_pass
+
+# ---- Run artifacts (logs, reports) ------------------------------------------
+artifacts/
+
+# ---- Ansible cruft ----------------------------------------------------------
+*.retry
+__pycache__/
+*.pyc
+
+# ---- Packaging build outputs (kept on disk for the packager, out of git) -----
+collections/
+dist/
+packaging/offline-collections/
+
+# Office lock/temp files
+~$*

@@ -1,0 +1,9 @@
+---
+- name: restart machine agent
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ machine_agent_service_name }}"
+    appd_service_state: restarted
+  when: appd_restart_on_config_change | bool

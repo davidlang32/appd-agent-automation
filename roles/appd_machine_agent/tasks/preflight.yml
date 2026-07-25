@@ -1,0 +1,179 @@
+---
+# =============================================================================
+# Machine Agent preflight — assess the host before any change; on any failure
+# mark the host SKIPPED (recorded, run continues). Never changes the host.
+# Sets: machine_agent_go (bool), machine_agent_skip_reason,
+#       machine_agent_installed, machine_agent_current_version
+# =============================================================================
+
+- name: Preflight
+  block:
+    - name: Verify privilege escalation (Linux)
+      ansible.builtin.command: id -u
+      become: true
+      changed_when: false
+      register: _ma_root
+      failed_when: _ma_root.stdout | trim != '0'
+      when: not appd_is_windows
+
+    - name: Verify admin rights (Windows)
+      ansible.windows.win_shell: >-
+        ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      changed_when: false
+      register: _ma_admin
+      failed_when: _ma_admin.stdout is not search('True')
+      when: appd_is_windows
+
+    - name: Check free disk at agent home (Linux)
+      ansible.builtin.shell: |
+        set -e
+        p="{{ machine_agent_home }}"
+        while [ ! -d "$p" ]; do p=$(dirname "$p"); done
+        df -Pm "$p" | awk 'NR==2 {print $4}'
+      register: _ma_free_lin
+      changed_when: false
+      failed_when: _ma_free_lin.stdout | trim | int < machine_agent_min_free_mb
+      when:
+        - not appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Check free disk at agent home (Windows)
+      ansible.windows.win_shell: |
+        $drive = (Split-Path -Qualifier '{{ machine_agent_home }}').TrimEnd(':')
+        [math]::Floor((Get-PSDrive -Name $drive).Free / 1MB)
+      register: _ma_free_win
+      changed_when: false
+      failed_when: _ma_free_win.stdout | trim | int < machine_agent_min_free_mb
+      when:
+        - appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Verify controller reachable (Linux)
+      ansible.builtin.wait_for:
+        host: "{{ appd_controller_host }}"
+        port: "{{ appd_controller_port }}"
+        timeout: 10
+      when:
+        - not appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Verify controller reachable (Windows)
+      ansible.windows.win_wait_for:
+        host: "{{ appd_controller_host }}"
+        port: "{{ appd_controller_port }}"
+        timeout: 10
+      when:
+        - appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Check the agent bundle staged on the control node
+      ansible.builtin.stat:
+        path: "{{ machine_agent_bundle_dir }}/{{ machine_agent_bundle_zip }}"
+        checksum_algorithm: sha256
+      register: _ma_zip
+      delegate_to: localhost
+      become: false
+      when: appd_action in ['install', 'upgrade']
+
+    - name: Verify bundle exists (and checksum, when pinned)
+      ansible.builtin.assert:
+        that:
+          - _ma_zip.stat.exists
+          - machine_agent_bundle_sha256 | length == 0 or _ma_zip.stat.checksum == machine_agent_bundle_sha256
+        fail_msg: "{{ machine_agent_bundle_zip }} missing from {{ machine_agent_bundle_dir }} or sha256 mismatch"
+      when: appd_action in ['install', 'upgrade']
+
+    - name: Detect existing install (Linux)
+      ansible.builtin.stat:
+        path: "{{ machine_agent_home }}/machineagent.jar"
+      register: _ma_exist_lin
+      when: not appd_is_windows
+
+    - name: Detect existing install (Windows)
+      ansible.windows.win_stat:
+        path: "{{ machine_agent_home }}\\machineagent.jar"
+      register: _ma_exist_win
+      when: appd_is_windows
+
+    - name: Record installed state
+      ansible.builtin.set_fact:
+        machine_agent_installed: "{{ (_ma_exist_win.stat.exists if appd_is_windows else _ma_exist_lin.stat.exists) | bool }}"
+
+    - name: Read version marker (Linux)
+      ansible.builtin.slurp:
+        src: "{{ machine_agent_marker_file }}"
+      register: _ma_marker_lin
+      failed_when: false
+      when: not appd_is_windows
+
+    - name: Read version marker (Windows)
+      ansible.windows.win_shell: >-
+        if (Test-Path '{{ machine_agent_marker_file }}') { (Get-Content '{{ machine_agent_marker_file }}' -Raw).Trim() } else { '' }
+      register: _ma_marker_win
+      changed_when: false
+      failed_when: false
+      when: appd_is_windows
+
+    - name: Record current version
+      ansible.builtin.set_fact:
+        machine_agent_current_version: >-
+          {{ ((_ma_marker_win.stdout | default('') | trim)
+              if appd_is_windows
+              else (_ma_marker_lin.content | default('') | b64decode | trim)) or 'unknown' }}
+
+    - name: Preflight passed
+      ansible.builtin.set_fact:
+        machine_agent_go: true
+        machine_agent_skip_reason: ""
+
+  rescue:
+    - name: Preflight failed — skip this host
+      ansible.builtin.set_fact:
+        machine_agent_go: false
+        machine_agent_skip_reason: >-
+          preflight failed at '{{ ansible_failed_task.name | default('unknown') }}'
+          ({{ ansible_failed_result.msg | default('see run log') }})
+
+# ---- action gates (skip/no-op, never abort) --------------------------------
+- name: "Gate :: install but already installed"
+  ansible.builtin.set_fact:
+    machine_agent_go: false
+    machine_agent_skip_reason: "agent {{ machine_agent_current_version | default('unknown') }} already installed; use appd_action=upgrade"
+  when:
+    - machine_agent_go | default(false)
+    - appd_action == 'install'
+    - machine_agent_installed | default(false)
+    - not appd_force | default(false) | bool
+
+- name: "Gate :: upgrade but nothing installed"
+  ansible.builtin.set_fact:
+    machine_agent_go: false
+    machine_agent_skip_reason: "no agent installed; use appd_action=install"
+  when:
+    - machine_agent_go | default(false)
+    - appd_action == 'upgrade'
+    - not (machine_agent_installed | default(false))
+
+- name: "Gate :: already at target version"
+  ansible.builtin.set_fact:
+    machine_agent_go: false
+    machine_agent_skip_reason: "already at {{ machine_agent_version }} (no change; -e appd_force=true to reinstall)"
+  when:
+    - machine_agent_go | default(false)
+    - appd_action == 'upgrade'
+    - machine_agent_current_version | default('unknown') == machine_agent_version
+    - not appd_force | default(false) | bool
+
+- name: "Gate :: uninstall but nothing installed"
+  ansible.builtin.set_fact:
+    machine_agent_go: false
+    machine_agent_skip_reason: "no agent present, nothing to remove"
+  when:
+    - machine_agent_go | default(false)
+    - appd_action == 'uninstall'
+    - not (machine_agent_installed | default(false))
+
+- name: Announce skip
+  ansible.builtin.debug:
+    msg: "SKIP {{ inventory_hostname }}: {{ machine_agent_skip_reason }}"
+  when: not (machine_agent_go | default(false)) or appd_force | default(false) | bool

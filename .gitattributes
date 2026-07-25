@@ -1,0 +1,21 @@
+# Keep Linux-bound scripts and Ansible content as LF regardless of OS, so a
+# package built on Windows still runs on the Linux control node.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.j2   text eol=lf
+*.cfg  text eol=lf
+
+# Windows-only helper stays CRLF
+*.ps1  text eol=crlf
+
+# Binary assets - never normalize
+*.png  binary
+*.jpg  binary
+*.pptx binary
+*.docx binary
+*.xlsx binary
+*.zip  binary
+*.tar.gz binary

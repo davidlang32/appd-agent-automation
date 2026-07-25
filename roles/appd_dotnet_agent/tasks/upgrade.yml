@@ -1,0 +1,5 @@
+---
+# STARTER STUB — typically MSI upgrade, then re-apply config.
+- name: Upgrade then reconfigure (.NET agent)
+  ansible.builtin.include_tasks: install.yml
+- ansible.builtin.include_tasks: configure.yml

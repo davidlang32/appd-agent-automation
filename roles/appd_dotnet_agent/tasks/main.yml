@@ -1,0 +1,8 @@
+---
+- name: Guard — .NET agent targets Windows only
+  ansible.builtin.fail:
+    msg: "{{ inventory_hostname }} is not Windows; remove it from dotnet_agents."
+  when: not appd_is_windows
+
+- name: ".NET agent :: {{ appd_action | default('configure') }}"
+  ansible.builtin.include_tasks: "{{ appd_action | default('configure') }}.yml"

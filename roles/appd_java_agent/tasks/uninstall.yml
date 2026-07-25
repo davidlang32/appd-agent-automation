@@ -1,0 +1,14 @@
+---
+# STARTER STUB
+- name: Remove Java agent home (Linux)
+  ansible.builtin.file:
+    path: "{{ java_agent_home }}"
+    state: absent
+  become: true
+  when: not appd_is_windows
+
+- name: Remove Java agent home (Windows)
+  ansible.windows.win_file:
+    path: "{{ java_agent_home }}"
+    state: absent
+  when: appd_is_windows

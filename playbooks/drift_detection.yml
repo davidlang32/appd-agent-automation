@@ -1,0 +1,12 @@
+---
+# Config drift detection without making changes.
+# Run the configure action in check mode with diff: any reported "changed"
+# task means the on-disk config has drifted from desired state in group_vars.
+#
+#   ansible-playbook playbooks/drift_detection.yml --check --diff
+#
+# (Wrapper around site.yml; --check/--diff are passed on the command line.)
+- ansible.builtin.import_playbook: site.yml
+  vars:
+    appd_action: configure
+    appd_restart_on_config_change: false   # never bounce services during a drift scan

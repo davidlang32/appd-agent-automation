@@ -1,0 +1,5 @@
+# Managed by Ansible (role: appd_db_agent). Manual edits will be overwritten.
+# Rendered from db_agent_vmoptions in group_vars/db_agents.yml
+{% for opt in db_agent_vmoptions %}
+{{ opt }}
+{% endfor %}

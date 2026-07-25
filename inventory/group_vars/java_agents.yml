@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# JAVA APM AGENT
+# =============================================================================
+java_agent_version: "24.5.0"
+
+# Identity reported to the controller (override per host in host_vars/)
+java_agent_application_name: "MyApp"
+java_agent_tier_name: "MyTier"
+java_agent_node_name: "{{ inventory_hostname_short }}"
+
+# Unique-host-id is recommended for VMs/containers that may be cloned
+java_agent_unique_host_id: "{{ inventory_hostname }}"
+
+# Extra JVM system properties merged into controller-info.xml / startup
+# (anything you'd normally pass as -Dappdynamics.*)
+java_agent_extra_properties: {}
+  # appdynamics.agent.maxMetrics: "300000"
+  # appdynamics.http.proxyHost: "proxy.example.com"
+
+# Optional XML config files this role manages (templated from templates/)
+java_agent_manage_app_agent_config: false   # app-agent-config.xml
+java_agent_manage_logging: false             # log4j2.xml under <ver>/conf/logging/

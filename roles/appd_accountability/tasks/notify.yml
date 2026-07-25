@@ -1,0 +1,45 @@
+---
+# Runs ONCE on localhost after report.yml. Emails the HTML report when enabled
+# and when the trigger condition matches. DISABLED by default (email_enabled).
+#
+# email_mode:
+#   always      -> every run
+#   on_change   -> only when >=1 agent changed
+#   on_failure  -> only when a managed config file is missing after the run
+#                  (proxy for failure; see README caveat for true failure mail)
+- name: Compute missing-file count (failure proxy)
+  ansible.builtin.set_fact:
+    acct_missing_count: "{{ acct_records | default([]) | map(attribute='files') | flatten | rejectattr('exists') | list | length }}"
+
+- name: Decide whether to send
+  ansible.builtin.set_fact:
+    _email_should_send: >-
+      {{ (email_mode == 'always') or
+         (email_mode == 'on_change' and (acct_changed_count | int) > 0) or
+         (email_mode == 'on_failure' and (acct_missing_count | int) > 0) }}
+
+- name: Email disabled — skipping (informational)
+  ansible.builtin.debug:
+    msg: >-
+      Email is disabled (email_enabled=false). Would-send={{ _email_should_send }}
+      under mode '{{ email_mode }}'. Set credentials + email_enabled=true to activate.
+  when: not (email_enabled | bool)
+
+- name: Send report email
+  community.general.mail:
+    host: "{{ email_smtp_host }}"
+    port: "{{ email_smtp_port }}"
+    username: "{{ email_smtp_username | default(omit) }}"
+    password: "{{ email_smtp_password | default(omit) }}"
+    secure: "{{ 'starttls' if (email_smtp_starttls | bool) else 'try' }}"
+    from: "{{ email_from }}"
+    to: "{{ email_to }}"
+    subject: "{{ email_subject_prefix }} {{ client_name }} — {{ appd_action | default('configure') }} — {{ acct_changed_count }} changed ({{ acct_run_id }})"
+    subtype: html
+    body: "{{ lookup('file', acct_report_file) }}"
+    attach:
+      - "{{ acct_report_file }}"
+  when:
+    - email_enabled | bool
+    - _email_should_send | bool
+    - acct_report_enabled | bool

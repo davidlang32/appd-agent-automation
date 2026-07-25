@@ -1,0 +1,3 @@
+---
+- name: "DB agent :: {{ appd_action | default('configure') }}"
+  ansible.builtin.include_tasks: "{{ appd_action | default('configure') }}.yml"

@@ -1,0 +1,187 @@
+---
+# =============================================================================
+# appd_common :: backup_config  (OS-agnostic, reusable by any agent role)
+#
+# Full config-set archive used before an upgrade (safety copy) or an uninstall
+# (the ONLY thing left behind). Complements backup_file.yml, which snapshots a
+# single file; this snapshots the whole managed config set, scrubs secrets,
+# writes a MANIFEST, compresses, and (optionally) fetches a copy to the control
+# node.
+#
+# Caller sets:
+#   bc_agent_home     absolute agent home on the target
+#   bc_version        version string for the archive name
+#   bc_preserve       list of paths (relative to bc_agent_home) to capture
+#   bc_custom_dirs    list of subdirs (relative) whose non-stock entries are
+#                     custom and should be captured (e.g. monitors, extensions)
+#   bc_stock_names    names inside bc_custom_dirs that ship in the bundle (skip)
+#   bc_service_name   service whose definition/startup params to capture
+#   bc_backup_dir     where the archive is written on the target
+#   bc_scrub_regex    regex whose match is redacted (default: access key)
+# Optional:
+#   bc_fetch          pull a copy to the control node (default true)
+#   bc_central_dir    control-node dir for fetched archives
+#
+# Sets fact: bc_archive_path  (path to the compressed archive on the target)
+# =============================================================================
+
+- name: "backup_config :: set names [{{ bc_agent_home | basename }}]"
+  ansible.builtin.set_fact:
+    _bc_name: "{{ inventory_hostname_short }}_{{ bc_version | default('unknown') }}_{{ ansible_date_time.iso8601_basic_short }}"
+    _bc_scrub_regex: "{{ bc_scrub_regex | default('<account-access-key>[^<]*</account-access-key>') }}"
+
+# ---------------------------------------------------------------- Linux -----
+- name: "backup_config (Linux)"
+  become: true
+  when: not appd_is_windows
+  block:
+    - name: Create staging dir
+      ansible.builtin.file:
+        path: "{{ bc_backup_dir }}/{{ _bc_name }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy preserved files into staging
+      ansible.builtin.shell: |
+        cd "{{ bc_agent_home }}" || exit 0
+        cp --parents -r "{{ item }}" "{{ bc_backup_dir }}/{{ _bc_name }}/" 2>/dev/null || true
+      loop: "{{ bc_preserve | default([]) }}"
+      changed_when: true
+
+    - name: Copy custom (non-stock) entries from custom dirs into staging
+      ansible.builtin.shell: |
+        for base in {{ bc_custom_dirs | default([]) | join(' ') }}; do
+          srcd="{{ bc_agent_home }}/$base"
+          [ -d "$srcd" ] || continue
+          mkdir -p "{{ bc_backup_dir }}/{{ _bc_name }}/$base"
+          for d in "$srcd"/*/; do
+            [ -d "$d" ] || continue
+            name=$(basename "$d")
+            case " {{ bc_stock_names | default([]) | join(' ') }} " in
+              *" $name "*) ;;
+              *) cp -r "$d" "{{ bc_backup_dir }}/{{ _bc_name }}/$base/$name" ;;
+            esac
+          done
+        done
+      failed_when: false
+      changed_when: true
+
+    - name: Capture service definition + startup params
+      ansible.builtin.shell: |
+        mkdir -p "{{ bc_backup_dir }}/{{ _bc_name }}/service"
+        cp "/etc/systemd/system/{{ bc_service_name }}.service" "{{ bc_backup_dir }}/{{ _bc_name }}/service/" 2>/dev/null || true
+        cp "/etc/sysconfig/{{ bc_service_name }}" "{{ bc_backup_dir }}/{{ _bc_name }}/service/" 2>/dev/null || true
+      changed_when: true
+
+    - name: Redact secrets in archived controller-info.xml
+      ansible.builtin.shell: |
+        f=$(find "{{ bc_backup_dir }}/{{ _bc_name }}" -name controller-info.xml 2>/dev/null | head -1)
+        [ -n "$f" ] && sed -i -E 's#{{ _bc_scrub_regex }}#<account-access-key>REDACTED-SEE-VAULT</account-access-key>#' "$f" || true
+      failed_when: false
+      changed_when: true
+
+    - name: List archived files for the manifest
+      ansible.builtin.shell: cd "{{ bc_backup_dir }}/{{ _bc_name }}" && find . -type f | sort
+      register: _bc_list
+      changed_when: false
+
+    - name: Write manifest
+      ansible.builtin.template:
+        src: ../../appd_common/templates/manifest.j2
+        dest: "{{ bc_backup_dir }}/{{ _bc_name }}/MANIFEST.txt"
+        mode: "0640"
+
+    - name: Compress the archive
+      ansible.builtin.command: >-
+        tar -czf "{{ bc_backup_dir }}/{{ _bc_name }}.tar.gz"
+        -C "{{ bc_backup_dir }}" "{{ _bc_name }}"
+      changed_when: true
+
+    - name: Remove staging dir
+      ansible.builtin.file:
+        path: "{{ bc_backup_dir }}/{{ _bc_name }}"
+        state: absent
+
+    - name: Record archive path
+      ansible.builtin.set_fact:
+        bc_archive_path: "{{ bc_backup_dir }}/{{ _bc_name }}.tar.gz"
+
+# -------------------------------------------------------------- Windows -----
+- name: "backup_config (Windows)"
+  when: appd_is_windows
+  block:
+    - name: Create staging dir
+      ansible.windows.win_file:
+        path: "{{ bc_backup_dir }}\\{{ _bc_name }}"
+        state: directory
+
+    - name: Copy preserved files + custom entries + service info into staging
+      ansible.windows.win_shell: |
+        $src = '{{ bc_agent_home }}'
+        $dst = '{{ bc_backup_dir }}\{{ _bc_name }}'
+        $preserve = '{{ bc_preserve | default([]) | to_json }}' | ConvertFrom-Json
+        foreach ($rel in $preserve) {
+          $rel = $rel -replace '/', '\'
+          $s = Join-Path $src $rel
+          if (Test-Path $s) {
+            $d = Join-Path $dst $rel
+            New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
+            Copy-Item $s $d -Recurse -Force
+          }
+        }
+        $customDirs = '{{ bc_custom_dirs | default([]) | to_json }}' | ConvertFrom-Json
+        $stock = '{{ bc_stock_names | default([]) | to_json }}' | ConvertFrom-Json
+        foreach ($base in $customDirs) {
+          $srcd = Join-Path $src $base
+          if (Test-Path $srcd) {
+            Get-ChildItem $srcd -Directory | Where-Object { $stock -notcontains $_.Name } | ForEach-Object {
+              $d = Join-Path $dst ($base + '\' + $_.Name)
+              New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
+              Copy-Item $_.FullName $d -Recurse -Force
+            }
+          }
+        }
+        New-Item -ItemType Directory -Force -Path (Join-Path $dst 'service') | Out-Null
+        $svc = Get-CimInstance Win32_Service -Filter "Name='{{ bc_service_name }}'" -ErrorAction SilentlyContinue
+        if ($svc) { $svc | Select-Object Name,PathName,StartMode,StartName | Out-File (Join-Path $dst 'service\service-definition.txt') }
+
+    - name: Redact secrets in archived controller-info.xml
+      ansible.windows.win_shell: |
+        $f = Get-ChildItem '{{ bc_backup_dir }}\{{ _bc_name }}' -Recurse -Filter controller-info.xml -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($f) { (Get-Content $f.FullName -Raw) -replace '{{ _bc_scrub_regex }}', '<account-access-key>REDACTED-SEE-VAULT</account-access-key>' | Set-Content $f.FullName }
+      failed_when: false
+
+    - name: Write manifest
+      ansible.windows.win_shell: |
+        $dst = '{{ bc_backup_dir }}\{{ _bc_name }}'
+        $lines = @(
+          'AppDynamics agent configuration archive',
+          'Host:          {{ inventory_hostname }}',
+          'Archived:      {{ ansible_date_time.iso8601 | default("") }}',
+          'Agent version: {{ bc_version | default("unknown") }}',
+          '',
+          'Note: account-access-key is REDACTED here. Current keys live in the',
+          'Ansible vault. Restore: reinstall the agent, copy these files over the',
+          'fresh install, re-insert the access key, restart the service.',
+          '',
+          'Contents:'
+        )
+        $lines + (Get-ChildItem $dst -Recurse -File | ForEach-Object { $_.FullName.Substring($dst.Length + 1) }) | Out-File (Join-Path $dst 'MANIFEST.txt')
+
+    - name: Compress the archive
+      ansible.windows.win_shell: |
+        Compress-Archive -Path '{{ bc_backup_dir }}\{{ _bc_name }}\*' -DestinationPath '{{ bc_backup_dir }}\{{ _bc_name }}.zip' -Force
+        Remove-Item -Recurse -Force '{{ bc_backup_dir }}\{{ _bc_name }}'
+
+    - name: Record archive path
+      ansible.builtin.set_fact:
+        bc_archive_path: "{{ bc_backup_dir }}\\{{ _bc_name }}.zip"
+
+# ------------------------------------------------------------- fetch --------
+- name: Pull a copy of the archive to the control node
+  ansible.builtin.fetch:
+    src: "{{ bc_archive_path }}"
+    dest: "{{ bc_central_dir | default(playbook_dir ~ '/../artifacts/config-archives') }}/{{ inventory_hostname }}/"
+    flat: true
+  become: "{{ not appd_is_windows }}"
+  when: bc_fetch | default(true) | bool

@@ -1,0 +1,19 @@
+---
+# STARTER STUB — flesh out with your artifact source (Nexus/Artifactory/share).
+- name: Ensure Java agent home exists (Linux)
+  ansible.builtin.file:
+    path: "{{ java_agent_home }}"
+    state: directory
+    owner: "{{ appd_owner }}"
+    group: "{{ appd_group }}"
+    mode: "0755"
+  become: true
+  when: not appd_is_windows
+
+- name: Ensure Java agent home exists (Windows)
+  ansible.windows.win_file:
+    path: "{{ java_agent_home }}"
+    state: directory
+  when: appd_is_windows
+
+# TODO: download <ver> zip, unarchive into java_agent_home, then run configure.yml

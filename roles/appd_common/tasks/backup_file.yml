@@ -1,0 +1,36 @@
+---
+# Reusable, OS-agnostic timestamped backup of a single config file.
+# Caller sets: appd_backup_src  (absolute path to the file to back up)
+# Skips silently if the file does not exist yet (first install).
+- name: "Stat {{ appd_backup_src }} (Linux)"
+  ansible.builtin.stat:
+    path: "{{ appd_backup_src }}"
+  register: _bk_stat_lin
+  when: not appd_is_windows
+
+- name: "Backup {{ appd_backup_src }} (Linux)"
+  ansible.builtin.copy:
+    src: "{{ appd_backup_src }}"
+    dest: "{{ appd_backup_src }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+    remote_src: true
+  become: true
+  when:
+    - not appd_is_windows
+    - appd_backup_before_change | bool
+    - _bk_stat_lin.stat.exists | default(false)
+
+- name: "Stat {{ appd_backup_src }} (Windows)"
+  ansible.windows.win_stat:
+    path: "{{ appd_backup_src }}"
+  register: _bk_stat_win
+  when: appd_is_windows
+
+- name: "Backup {{ appd_backup_src }} (Windows)"
+  ansible.windows.win_copy:
+    src: "{{ appd_backup_src }}"
+    dest: "{{ appd_backup_src }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+    remote_src: true
+  when:
+    - appd_is_windows
+    - appd_backup_before_change | bool
+    - _bk_stat_win.stat.exists | default(false)

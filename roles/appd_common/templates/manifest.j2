@@ -1,0 +1,15 @@
+AppDynamics agent configuration archive
+Host:          {{ inventory_hostname }}
+Archived:      {{ ansible_date_time.iso8601 }}
+Agent version: {{ bc_version | default('unknown') }}
+Action:        {{ appd_action | default('n/a') }}
+
+Note: account-access-key is REDACTED in this archive so it can be stored
+long-term without tripping security scans. Current keys live in the Ansible
+vault. To restore: reinstall the agent (appd_action=install), copy these files
+over the fresh install, re-insert the access key, and restart the service.
+
+Contents:
+{% for f in _bc_list.stdout_lines %}
+{{ f }}
+{% endfor %}

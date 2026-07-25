@@ -1,0 +1,6 @@
+---
+# Convenience wrapper: force the 'configure' action.
+# Equivalent to: site.yml -e appd_action=configure
+- ansible.builtin.import_playbook: site.yml
+  vars:
+    appd_action: configure

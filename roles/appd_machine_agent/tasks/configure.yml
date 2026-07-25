@@ -1,0 +1,57 @@
+---
+# 1) Core controller-info.xml
+- name: Backup machine-agent controller-info.xml
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_file
+  vars:
+    appd_backup_src: "{{ machine_agent_controller_info }}"
+
+- name: Render machine-agent controller-info.xml
+  ansible.builtin.template:
+    src: ../../appd_common/templates/controller-info.xml.j2
+    dest: "{{ machine_agent_controller_info }}"
+  vars:
+    ci_application_name: "{{ machine_agent_application_name }}"
+    ci_tier_name: "{{ machine_agent_tier_name }}"
+    ci_node_name: "{{ machine_agent_node_name }}"
+    ci_unique_host_id: "{{ machine_agent_unique_host_id }}"
+    ci_sim_enabled: "{{ machine_agent_sim_enabled }}"
+  become: "{{ not appd_is_windows }}"
+  register: _ma_ci
+  notify: restart machine agent
+
+# 2) Extension YAML files (ServerMonitoring, DockerMonitoring, CrashGuard, AgentServer)
+- name: Backup extension config files
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_file
+  vars:
+    appd_backup_src: "{{ item.path }}"
+  loop: "{{ machine_agent_extensions }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: (lookup('vars', item.key).enabled | default(false)) | bool
+
+- name: Render extension config files
+  ansible.builtin.template:
+    src: extension_config.yml.j2
+    dest: "{{ item.path }}"
+  vars:
+    ext_config: "{{ lookup('vars', item.key).config }}"
+  loop: "{{ machine_agent_extensions }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: (lookup('vars', item.key).enabled | default(false)) | bool
+  become: "{{ not appd_is_windows }}"
+  register: _ma_ext
+  notify: restart machine agent
+
+- name: Record accountability snapshot
+  ansible.builtin.include_role:
+    name: appd_accountability
+    tasks_from: record
+  vars:
+    acct_agent_type: machine
+    acct_changed: "{{ (_ma_ci is changed) or (_ma_ext is changed) }}"
+    acct_files: "{{ [machine_agent_controller_info] + (machine_agent_extensions | map(attribute='path') | list) }}"

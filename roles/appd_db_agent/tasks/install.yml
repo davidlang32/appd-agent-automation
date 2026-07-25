@@ -1,0 +1,19 @@
+---
+# STARTER STUB
+- name: Ensure DB agent home exists (Linux)
+  ansible.builtin.file:
+    path: "{{ db_agent_home }}"
+    state: directory
+    owner: "{{ appd_owner }}"
+    group: "{{ appd_group }}"
+    mode: "0755"
+  become: true
+  when: not appd_is_windows
+
+- name: Ensure DB agent home exists (Windows)
+  ansible.windows.win_file:
+    path: "{{ db_agent_home }}"
+    state: directory
+  when: appd_is_windows
+
+# TODO: deploy db-agent bundle, install service, then run configure.yml

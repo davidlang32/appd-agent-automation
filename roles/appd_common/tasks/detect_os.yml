@@ -1,0 +1,43 @@
+---
+# -----------------------------------------------------------------------------
+# OS DETECTION
+# -----------------------------------------------------------------------------
+# Goal: feed in a flat list of servers and let the automation figure out the
+# rest. Ansible gathers facts on connect; we read ansible_system to set a single
+# boolean (appd_is_windows) plus normalized path/separator facts. Every other
+# task keys off these facts instead of testing the OS again.
+#
+# NOTE on connection: the *connection method* (ssh vs psrp/winrm) must be known
+# before we connect, so it comes from the inventory OS group. Once connected,
+# everything below is automatic. See README "OS handling" for the fully
+# OS-agnostic option (OpenSSH on Windows + a dynamic inventory that tags OS).
+
+- name: Ensure facts are gathered
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+      - "min"
+  when: ansible_system is not defined
+
+- name: Set OS boolean
+  ansible.builtin.set_fact:
+    appd_is_windows: "{{ ansible_system == 'Win32NT' }}"
+
+- name: Set normalized path facts (Linux)
+  ansible.builtin.set_fact:
+    appd_path_sep: "/"
+    appd_home_resolved: "{{ appd_home | default('/opt/appdynamics') }}"
+  when: not appd_is_windows
+
+- name: Set normalized path facts (Windows)
+  ansible.builtin.set_fact:
+    appd_path_sep: "\\"
+    appd_home_resolved: "{{ appd_home | default('C:\\opt\\appdynamics') }}"
+  when: appd_is_windows
+
+- name: Report detected target
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} detected as
+      {{ 'Windows' if appd_is_windows else 'Linux/Unix' }};
+      appd_home={{ appd_home_resolved }}

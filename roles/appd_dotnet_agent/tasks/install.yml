@@ -1,0 +1,7 @@
+---
+# STARTER STUB — typically an MSI install.
+- name: Ensure config dir exists
+  ansible.windows.win_file:
+    path: "{{ dotnet_agent_config_dir }}"
+    state: directory
+# TODO: copy + install the .NET agent MSI (ansible.windows.win_package), then configure.yml

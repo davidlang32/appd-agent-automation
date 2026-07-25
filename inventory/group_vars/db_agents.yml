@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# DATABASE AGENT
+# =============================================================================
+db_agent_version: "24.5.0"
+
+# Identity (the DB agent registers under a unique name; collectors themselves
+# are configured in the Controller UI, not in files on the host)
+db_agent_name: "{{ inventory_hostname_short }}-dbagent"
+
+# ---- bin/DatabaseAgentService.vmoptions ------------------------------------
+# JVM options for the DB agent service. The role renders these line-by-line
+# into <db_agent_home>/bin/DatabaseAgentService.vmoptions
+db_agent_vmoptions:
+  - "-Xms256m"
+  - "-Xmx1024m"
+  - "-Dappdynamics.controller.hostName={{ appd_controller_host }}"
+  - "-Dappdynamics.controller.port={{ appd_controller_port }}"
+  - "-Dappdynamics.controller.ssl.enabled={{ appd_controller_ssl_enabled | lower }}"
+  - "-Dappdynamics.agent.accountName={{ appd_controller_account_name }}"
+  - "-Dappdynamics.agent.accountAccessKey={{ appd_controller_account_access_key }}"
+  # Add any custom flags here; the file is rewritten from this list.

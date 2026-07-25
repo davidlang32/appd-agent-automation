@@ -1,0 +1,17 @@
+---
+# Reusable, OS-agnostic service control.
+# Caller sets: appd_service_name, appd_service_state (started|stopped|restarted)
+- name: "Manage Linux service {{ appd_service_name }}"
+  ansible.builtin.service:
+    name: "{{ appd_service_name }}"
+    state: "{{ appd_service_state }}"
+    enabled: true
+  become: true
+  when: not appd_is_windows
+
+- name: "Manage Windows service {{ appd_service_name }}"
+  ansible.windows.win_service:
+    name: "{{ appd_service_name }}"
+    state: "{{ appd_service_state }}"
+    start_mode: auto
+  when: appd_is_windows

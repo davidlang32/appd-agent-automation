@@ -1,0 +1,8 @@
+---
+- name: restart dotnet coordinator
+  ansible.windows.win_service:
+    name: "{{ dotnet_agent_coordinator_service }}"
+    state: restarted
+  when: appd_restart_on_config_change | bool
+  # NOTE: instrumented IIS app pools / services must also be recycled for
+  # changes to take full effect — schedule that separately.

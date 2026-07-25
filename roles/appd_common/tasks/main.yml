@@ -1,0 +1,8 @@
+---
+# appd_common — shared logic included by every agent role.
+# Provides OS detection and a normalized set of facts so downstream
+# tasks never hard-code paths or shell vs. powershell behaviour.
+
+- name: Detect operating system and normalize facts
+  ansible.builtin.import_tasks: detect_os.yml
+  tags: [always]

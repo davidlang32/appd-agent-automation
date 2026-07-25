@@ -1,0 +1,5 @@
+# Managed by Ansible (role: appd_machine_agent). Manual edits will be overwritten.
+# Rendered from the matching block in group_vars/machine_agents.yml.
+# NOTE: keys mirror the variable map exactly — align them to the extension's
+# documented schema before enabling in production.
+{{ ext_config | to_nice_yaml(indent=2) }}

@@ -1,0 +1,6 @@
+---
+- name: java agent changed
+  ansible.builtin.debug:
+    msg: >-
+      Java agent config updated on {{ inventory_hostname }}.
+      A restart of the instrumented JVM is required for changes to take effect.
