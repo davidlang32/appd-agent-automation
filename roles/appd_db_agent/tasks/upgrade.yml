@@ -118,6 +118,14 @@
         content: "{{ db_agent_version }}"
         dest: "{{ db_agent_marker_file }}"
 
+    # Re-register the wrapper for the NEW agent. The service account is NOT set
+    # here — it is applied manually after the upgrade (see the end of this file).
+    - name: Re-register the DatabaseAgentService wrapper for the new agent
+      ansible.windows.win_shell: "{{ db_agent_win_service_install_cmd }}"
+      args:
+        chdir: "{{ db_agent_bin_dir }}"
+      changed_when: true
+
 # --------------------------------------------------------------- config -----
 - name: Re-render config (DatabaseAgentService.vmoptions)
   ansible.builtin.include_tasks: configure.yml
@@ -132,18 +140,21 @@
   become: true
   when: not appd_is_windows
 
-- name: Start the service (existing registration/account preserved)
-  ansible.builtin.include_role:
-    name: appd_common
-    tasks_from: manage_service
-  vars:
-    appd_service_name: "{{ db_agent_service_name }}"
-    appd_service_state: started
-
-# --------------------------------------------------- quick verify + rollback -
-- name: Quick post-upgrade verify (service + startup log)
+# ============================================================================
+# LINUX: start the service, verify (service + startup log), rollback on failure.
+# ============================================================================
+- name: "Linux :: start, verify, auto-rollback"
+  when: not appd_is_windows
   block:
-    - name: Confirm service active (Linux)
+    - name: Start the service
+      ansible.builtin.include_role:
+        name: appd_common
+        tasks_from: manage_service
+      vars:
+        appd_service_name: "{{ db_agent_service_name }}"
+        appd_service_state: started
+
+    - name: Confirm service active
       ansible.builtin.command: systemctl is-active {{ db_agent_service_name }}
       register: _db_v_lin
       changed_when: false
@@ -151,18 +162,8 @@
       delay: 10
       until: _db_v_lin.stdout | trim == 'active'
       become: true
-      when: not appd_is_windows
 
-    - name: Confirm service running (Windows)
-      ansible.windows.win_shell: (Get-Service -Name '{{ db_agent_service_name }}').Status
-      register: _db_v_win
-      changed_when: false
-      retries: 3
-      delay: 10
-      until: _db_v_win.stdout is search('Running')
-      when: appd_is_windows
-
-    - name: Startup line in the agent log (Linux)
+    - name: Startup line in the agent log
       ansible.builtin.shell: grep -E "{{ db_agent_log_success_patterns | join('|') }}" "{{ db_agent_log_file }}"
       register: _db_log_lin
       changed_when: false
@@ -170,24 +171,12 @@
       delay: 10
       until: _db_log_lin.rc == 0
       become: true
-      when: not appd_is_windows
 
-    - name: Startup line in the agent log (Windows)
-      ansible.windows.win_shell: |
-        $p = '{{ db_agent_log_success_patterns | to_json }}' | ConvertFrom-Json
-        Select-String -Path '{{ db_agent_log_file }}' -Pattern $p -Quiet
-      register: _db_log_win
-      changed_when: false
-      retries: 6
-      delay: 10
-      until: _db_log_win.stdout is search('True')
-      when: appd_is_windows
-
-    - name: Remove the rollback copy (upgrade verified locally)
+    - name: Remove the rollback copy (upgrade verified)
       ansible.builtin.file:
         path: "{{ db_agent_old_dir }}"
         state: absent
-      become: "{{ not appd_is_windows }}"
+      become: true
       when: db_agent_old_dir is defined
 
     - name: Record upgrade result
@@ -195,9 +184,9 @@
         db_agent_result: "UPGRADED {{ db_agent_current_version | default('unknown') }} -> {{ db_agent_version }}"
 
   rescue:
-    - name: Roll back (Linux)
+    - name: Roll back to the previous install
       become: true
-      when: not appd_is_windows and db_agent_old_dir is defined
+      when: db_agent_old_dir is defined
       block:
         - name: Stop the failed new agent
           ansible.builtin.service:
@@ -216,28 +205,82 @@
             name: "{{ db_agent_service_name }}"
             state: started
 
-    - name: Roll back (Windows)
-      when: appd_is_windows and db_agent_old_dir is defined
-      block:
-        - name: Stop the failed new agent
-          ansible.windows.win_service:
-            name: "{{ db_agent_service_name }}"
-            state: stopped
-          failed_when: false
-        - name: Delete the failed new install
-          ansible.windows.win_file:
-            path: "{{ db_agent_home }}"
-            state: absent
-        - name: Restore the old install
-          ansible.windows.win_shell: Move-Item -Path '{{ db_agent_old_dir }}' -Destination '{{ db_agent_home }}'
-          changed_when: true
-        - name: Start the old agent
-          ansible.windows.win_service:
-            name: "{{ db_agent_service_name }}"
-            state: started
-
     - name: Record rollback
       ansible.builtin.set_fact:
         db_agent_go: false
         db_agent_skip_reason: "post-upgrade verify FAILED — ROLLED BACK to {{ db_agent_current_version | default('previous version') }}"
         db_agent_result: "UPGRADE FAILED — rolled back to {{ db_agent_current_version | default('previous') }}"
+
+# ============================================================================
+# WINDOWS: normal upgrade path. Start the re-registered service (default
+# account) and validate the agent STARTED and CONNECTED TO THE CONTROLLER,
+# THEN stop it. Controller connectivity does not need the service account, so
+# this proves the upgrade. Validating that the database COLLECTORS are pulling
+# data needs the real service account, so that stays a manual step: set the
+# account, start, and confirm collectors.
+# ============================================================================
+- name: "Windows :: start, validate against controller, then stop"
+  when: appd_is_windows
+  block:
+    - name: Start the service to validate the upgrade
+      ansible.windows.win_service:
+        name: "{{ db_agent_service_name }}"
+        state: started
+
+    - name: Confirm service running
+      ansible.windows.win_shell: (Get-Service -Name '{{ db_agent_service_name }}').Status
+      register: _db_v_win
+      changed_when: false
+      retries: 3
+      delay: 10
+      until: _db_v_win.stdout is search('Running')
+
+    - name: Confirm the agent started and connected to the controller (log)
+      ansible.windows.win_shell: |
+        $p = '{{ db_agent_log_success_patterns | to_json }}' | ConvertFrom-Json
+        Select-String -Path '{{ db_agent_log_file }}' -Pattern $p -Quiet
+      register: _db_log_win
+      changed_when: false
+      retries: 6
+      delay: 10
+      until: _db_log_win.stdout is search('True')
+
+    - name: Stop the service (the service-account step is manual)
+      ansible.windows.win_service:
+        name: "{{ db_agent_service_name }}"
+        state: stopped
+
+    - name: Remove the rollback copy (upgrade validated)
+      ansible.windows.win_file:
+        path: "{{ db_agent_old_dir }}"
+        state: absent
+      when: db_agent_old_dir is defined
+
+    - name: Record upgrade result
+      ansible.builtin.set_fact:
+        db_agent_result: >-
+          UPGRADED {{ db_agent_current_version | default('unknown') }} -> {{ db_agent_version }};
+          validated: agent started and connected to the controller. Service is now
+          STOPPED. MANUAL next steps: set the '{{ db_agent_service_name }}' service
+          logon account, start it, and confirm the database collectors are collecting.
+
+    - name: Show result + manual next steps
+      ansible.builtin.debug:
+        msg: "{{ db_agent_result }}"
+
+  rescue:
+    - name: Leave the service stopped after a failed validation
+      ansible.windows.win_service:
+        name: "{{ db_agent_service_name }}"
+        state: stopped
+      failed_when: false
+
+    - name: Record validation failure (needs manual attention)
+      ansible.builtin.set_fact:
+        db_agent_go: false
+        db_agent_skip_reason: "post-upgrade validation FAILED on Windows"
+        db_agent_result: >-
+          UPGRADE VALIDATION FAILED on Windows — the {{ db_agent_version }} agent did not
+          start / connect to the controller. Service left STOPPED; new install in place,
+          old install kept at {{ db_agent_old_dir | default('n/a') }} for manual rollback.
+          Investigate {{ db_agent_log_file }}.

@@ -29,7 +29,10 @@ db_agent_backup_dir: "{{ appd_home_resolved }}{{ appd_path_sep }}config-archive"
 
 # ---- Windows service (AppD DatabaseAgentService wrapper) ---------------------
 # Fresh install registers the wrapper, then pins the service to run under the
-# required service account (upgrades DO NOT touch the registration/account).
+# required service account. UPGRADE re-registers the wrapper, starts the service
+# under the DEFAULT account only to validate the agent started + connected to the
+# controller, then STOPS it. Setting the real service account, starting, and
+# confirming the database collectors are collecting is a manual step afterward.
 # These commands are bundle-specific — VERIFY they match your DB agent bundle.
 db_agent_win_service_install_cmd: "cscript.exe //nologo InstallService.vbs"
 db_agent_win_service_uninstall_cmd: "cscript.exe //nologo UninstallService.vbs"
