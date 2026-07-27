@@ -3,3 +3,47 @@ db_agent_home: "{{ appd_home_resolved }}{{ appd_path_sep }}db-agent"
 db_agent_bin_dir: "{{ db_agent_home }}{{ appd_path_sep }}bin"
 db_agent_vmoptions_file: "{{ db_agent_bin_dir }}{{ appd_path_sep }}DatabaseAgentService.vmoptions"
 db_agent_service_name: "appdynamics-db-agent"
+
+# =============================================================================
+# LIFECYCLE (install / upgrade / uninstall)
+# =============================================================================
+
+# Version marker written on install/upgrade; read in preflight for idempotency.
+db_agent_marker_file: "{{ db_agent_home }}{{ appd_path_sep }}.appd-managed-version"
+
+# ---- Bundle staged on the CONTROL NODE (the DB agent zip is cross-platform) --
+db_agent_bundle_dir: "{{ playbook_dir }}/../files"
+db_agent_bundle_zip: "db-agent-{{ db_agent_version }}.zip"
+db_agent_bundle_sha256: ""          # pin to enforce integrity; "" = skip
+
+# ---- Preserved across an upgrade (relative to the agent home) ----------------
+# The .vmoptions is re-rendered from vars, but is listed so the ARCHIVE captures
+# it (with its access key redacted). conf/ carries any certs/custom files.
+db_agent_preserve_files:
+  - bin/DatabaseAgentService.vmoptions
+  - conf
+db_agent_custom_dirs: []            # DB agent has no monitors/extensions dirs
+
+# ---- Backup / archive on the target ------------------------------------------
+db_agent_backup_dir: "{{ appd_home_resolved }}{{ appd_path_sep }}config-archive"
+
+# ---- Windows service (AppD DatabaseAgentService wrapper) ---------------------
+# Fresh install registers the wrapper, then pins the service to run under the
+# required service account (upgrades DO NOT touch the registration/account).
+# These commands are bundle-specific — VERIFY they match your DB agent bundle.
+db_agent_win_service_install_cmd: "cscript.exe //nologo InstallService.vbs"
+db_agent_win_service_uninstall_cmd: "cscript.exe //nologo UninstallService.vbs"
+# Service account for a FRESH Windows install (password belongs in Vault).
+# Preflight SKIPS a fresh Windows install if the account is empty, so the
+# service never silently falls back to LocalSystem.
+db_agent_win_service_account: "{{ vault_db_agent_win_service_account | default('') }}"
+db_agent_win_service_password: "{{ vault_db_agent_win_service_password | default('') }}"
+
+# ---- Preflight ---------------------------------------------------------------
+db_agent_min_free_mb: 1024
+
+# ---- Validation (verify) -----------------------------------------------------
+db_agent_log_file: "{{ db_agent_home }}{{ appd_path_sep }}logs{{ appd_path_sep }}database-agent.log"
+db_agent_log_success_patterns:
+  - "Started AppDynamics"
+  - "registered with the controller"

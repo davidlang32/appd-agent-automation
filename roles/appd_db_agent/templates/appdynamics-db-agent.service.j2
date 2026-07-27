@@ -1,0 +1,19 @@
+# Managed by Ansible (role: appd_db_agent). JVM options are read from
+# {{ db_agent_vmoptions_file }} (rendered from db_agent_vmoptions in
+# group_vars/db_agents.yml), so that file stays the single source of truth on
+# both OSes.
+[Unit]
+Description=AppDynamics Database Agent
+After=network.target
+
+[Service]
+Type=simple
+User={{ appd_owner }}
+Group={{ appd_group }}
+WorkingDirectory={{ db_agent_home }}
+ExecStart=/bin/sh -c 'exec {{ db_agent_home }}/jre/bin/java $(grep -vE "^\\s*#" {{ db_agent_vmoptions_file }} | tr "\\n" " ") -jar {{ db_agent_home }}/db-agent.jar'
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

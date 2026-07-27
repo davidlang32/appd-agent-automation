@@ -1,3 +1,9 @@
 ---
+# Preflight assesses the host (skip-and-continue on any problem), then the
+# chosen action runs only when preflight says GO (or -e appd_force=true).
+- name: "DB agent :: preflight"
+  ansible.builtin.include_tasks: preflight.yml
+
 - name: "DB agent :: {{ appd_action | default('configure') }}"
   ansible.builtin.include_tasks: "{{ appd_action | default('configure') }}.yml"
+  when: (db_agent_go | default(true) | bool) or (appd_force | default(false) | bool)

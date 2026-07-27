@@ -1,19 +1,116 @@
 ---
-# STARTER STUB
-- name: Ensure DB agent home exists (Linux)
+# Fresh install: deploy the bundle from the control node (checksum verified in
+# preflight), render config, register the service, start.
+
+# ---------------------------------------------------------------- Linux -----
+- name: Install (Linux)
+  become: true
+  when: not appd_is_windows
+  block:
+    - name: Ensure service group
+      ansible.builtin.group:
+        name: "{{ appd_group }}"
+        system: true
+
+    - name: Ensure service user
+      ansible.builtin.user:
+        name: "{{ appd_owner }}"
+        group: "{{ appd_group }}"
+        system: true
+        shell: /sbin/nologin
+        create_home: false
+
+    - name: Ensure agent home
+      ansible.builtin.file:
+        path: "{{ db_agent_home }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract the agent bundle from the control node
+      ansible.builtin.unarchive:
+        src: "{{ db_agent_bundle_dir }}/{{ db_agent_bundle_zip }}"
+        dest: "{{ db_agent_home }}"
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: appdynamics-db-agent.service.j2
+        dest: "/etc/systemd/system/{{ db_agent_service_name }}.service"
+        mode: "0644"
+
+    - name: Write version marker
+      ansible.builtin.copy:
+        content: "{{ db_agent_version }}\n"
+        dest: "{{ db_agent_marker_file }}"
+        mode: "0644"
+
+# -------------------------------------------------------------- Windows -----
+- name: Install (Windows)
+  when: appd_is_windows
+  block:
+    - name: Ensure agent home
+      ansible.windows.win_file:
+        path: "{{ db_agent_home }}"
+        state: directory
+
+    - name: Copy bundle to host
+      ansible.windows.win_copy:
+        src: "{{ db_agent_bundle_dir }}/{{ db_agent_bundle_zip }}"
+        dest: "C:\\Windows\\Temp\\{{ db_agent_bundle_zip }}"
+
+    - name: Extract the agent bundle
+      ansible.windows.win_shell: >-
+        Expand-Archive -Path 'C:\Windows\Temp\{{ db_agent_bundle_zip }}'
+        -DestinationPath '{{ db_agent_home }}' -Force
+
+    - name: Remove copied bundle
+      ansible.windows.win_file:
+        path: "C:\\Windows\\Temp\\{{ db_agent_bundle_zip }}"
+        state: absent
+
+    - name: Write version marker
+      ansible.windows.win_copy:
+        content: "{{ db_agent_version }}"
+        dest: "{{ db_agent_marker_file }}"
+
+    # Register the AppD DatabaseAgentService wrapper. This command is
+    # bundle-specific — set db_agent_win_service_install_cmd to match your
+    # bundle's service installer.
+    - name: Register the DatabaseAgentService wrapper
+      ansible.windows.win_shell: "{{ db_agent_win_service_install_cmd }}"
+      args:
+        chdir: "{{ db_agent_bin_dir }}"
+      changed_when: true
+
+    - name: Set the service to run under the required service account
+      ansible.windows.win_service:
+        name: "{{ db_agent_service_name }}"
+        start_mode: auto
+        username: "{{ db_agent_win_service_account }}"
+        password: "{{ db_agent_win_service_password }}"
+      no_log: true
+
+# --------------------------------------------------------------- config -----
+- name: Render config (DatabaseAgentService.vmoptions)
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Fix ownership (Linux)
   ansible.builtin.file:
     path: "{{ db_agent_home }}"
     state: directory
     owner: "{{ appd_owner }}"
     group: "{{ appd_group }}"
-    mode: "0755"
+    recurse: true
   become: true
   when: not appd_is_windows
 
-- name: Ensure DB agent home exists (Windows)
-  ansible.windows.win_file:
-    path: "{{ db_agent_home }}"
-    state: directory
-  when: appd_is_windows
+- name: Enable and start the service
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ db_agent_service_name }}"
+    appd_service_state: started
 
-# TODO: deploy db-agent bundle, install service, then run configure.yml
+- name: Record install result
+  ansible.builtin.set_fact:
+    db_agent_result: "INSTALLED {{ db_agent_version }} (pending phase-2 validation)"

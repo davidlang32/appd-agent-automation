@@ -1,5 +1,243 @@
 ---
-# STARTER STUB — implement version swap, then re-apply config.
-- name: Upgrade then reconfigure (DB agent)
-  ansible.builtin.include_tasks: install.yml
-- ansible.builtin.include_tasks: configure.yml
+# Upgrade: archive -> stop -> move old aside (rollback point) -> deploy new ->
+# re-render config -> carry over non-rendered preserved files -> start -> quick
+# verify, with auto-rollback on failure.
+#
+# Windows service account is PRESERVED: the existing DatabaseAgentService
+# registration is never re-registered or reconfigured here. Because the agent
+# home path is unchanged, the service's ImagePath, logon account, and registry
+# entry all stay exactly as they were.
+
+- name: Archive full config (incl. service registry) before touching anything
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_config
+  vars:
+    bc_agent_home: "{{ db_agent_home }}"
+    bc_version: "{{ db_agent_current_version | default('unknown') }}"
+    bc_preserve: "{{ db_agent_preserve_files }}"
+    bc_custom_dirs: "{{ db_agent_custom_dirs }}"
+    bc_stock_names: []
+    bc_service_name: "{{ db_agent_service_name }}"
+    bc_backup_dir: "{{ db_agent_backup_dir }}"
+    bc_export_service_registry: true
+
+- name: Stop the service
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ db_agent_service_name }}"
+    appd_service_state: stopped
+  ignore_errors: true
+
+# ---------------------------------------------------------------- Linux -----
+- name: Upgrade (Linux)
+  become: true
+  when: not appd_is_windows
+  block:
+    - name: Move old install aside (rollback point)
+      ansible.builtin.command: mv "{{ db_agent_home }}" "{{ db_agent_home }}.old-{{ ansible_date_time.iso8601_basic_short }}"
+      changed_when: true
+
+    - name: Remember rollback path
+      ansible.builtin.set_fact:
+        db_agent_old_dir: "{{ db_agent_home }}.old-{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Create new agent home
+      ansible.builtin.file:
+        path: "{{ db_agent_home }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract the new bundle
+      ansible.builtin.unarchive:
+        src: "{{ db_agent_bundle_dir }}/{{ db_agent_bundle_zip }}"
+        dest: "{{ db_agent_home }}"
+
+    - name: Carry over non-rendered preserved files
+      ansible.builtin.shell: |
+        cd "{{ db_agent_old_dir }}"
+        cp --parents -r "{{ item }}" "{{ db_agent_home }}/" 2>/dev/null || true
+      loop: "{{ db_agent_preserve_files }}"
+      changed_when: true
+
+    - name: Ensure systemd unit exists (leave an existing one untouched)
+      ansible.builtin.template:
+        src: appdynamics-db-agent.service.j2
+        dest: "/etc/systemd/system/{{ db_agent_service_name }}.service"
+        force: false
+        mode: "0644"
+
+    - name: Write version marker
+      ansible.builtin.copy:
+        content: "{{ db_agent_version }}\n"
+        dest: "{{ db_agent_marker_file }}"
+        mode: "0644"
+
+# -------------------------------------------------------------- Windows -----
+- name: Upgrade (Windows)
+  when: appd_is_windows
+  block:
+    - name: Move old install aside (rollback point)
+      ansible.windows.win_shell: >-
+        Move-Item -Path '{{ db_agent_home }}'
+        -Destination '{{ db_agent_home }}.old-{{ ansible_date_time.iso8601_basic_short }}'
+      changed_when: true
+
+    - name: Remember rollback path
+      ansible.builtin.set_fact:
+        db_agent_old_dir: "{{ db_agent_home }}.old-{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Copy new bundle to host
+      ansible.windows.win_copy:
+        src: "{{ db_agent_bundle_dir }}/{{ db_agent_bundle_zip }}"
+        dest: "C:\\Windows\\Temp\\{{ db_agent_bundle_zip }}"
+
+    - name: Extract the new bundle
+      ansible.windows.win_shell: >-
+        Expand-Archive -Path 'C:\Windows\Temp\{{ db_agent_bundle_zip }}'
+        -DestinationPath '{{ db_agent_home }}' -Force
+
+    - name: Remove copied bundle
+      ansible.windows.win_file:
+        path: "C:\\Windows\\Temp\\{{ db_agent_bundle_zip }}"
+        state: absent
+
+    - name: Carry over non-rendered preserved files from the old install
+      ansible.windows.win_shell: |
+        $old = '{{ db_agent_old_dir }}'; $new = '{{ db_agent_home }}'
+        $preserve = '{{ db_agent_preserve_files | to_json }}' | ConvertFrom-Json
+        foreach ($rel in $preserve) {
+          $rel = $rel.Replace([char]47,[char]92); $s = Join-Path $old $rel
+          if (Test-Path $s) { $d = Join-Path $new $rel; New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null; Copy-Item $s $d -Recurse -Force }
+        }
+
+    - name: Write version marker
+      ansible.windows.win_copy:
+        content: "{{ db_agent_version }}"
+        dest: "{{ db_agent_marker_file }}"
+
+# --------------------------------------------------------------- config -----
+- name: Re-render config (DatabaseAgentService.vmoptions)
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Fix ownership (Linux)
+  ansible.builtin.file:
+    path: "{{ db_agent_home }}"
+    state: directory
+    owner: "{{ appd_owner }}"
+    group: "{{ appd_group }}"
+    recurse: true
+  become: true
+  when: not appd_is_windows
+
+- name: Start the service (existing registration/account preserved)
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: manage_service
+  vars:
+    appd_service_name: "{{ db_agent_service_name }}"
+    appd_service_state: started
+
+# --------------------------------------------------- quick verify + rollback -
+- name: Quick post-upgrade verify (service + startup log)
+  block:
+    - name: Confirm service active (Linux)
+      ansible.builtin.command: systemctl is-active {{ db_agent_service_name }}
+      register: _db_v_lin
+      changed_when: false
+      retries: 3
+      delay: 10
+      until: _db_v_lin.stdout | trim == 'active'
+      become: true
+      when: not appd_is_windows
+
+    - name: Confirm service running (Windows)
+      ansible.windows.win_shell: (Get-Service -Name '{{ db_agent_service_name }}').Status
+      register: _db_v_win
+      changed_when: false
+      retries: 3
+      delay: 10
+      until: _db_v_win.stdout is search('Running')
+      when: appd_is_windows
+
+    - name: Startup line in the agent log (Linux)
+      ansible.builtin.shell: grep -E "{{ db_agent_log_success_patterns | join('|') }}" "{{ db_agent_log_file }}"
+      register: _db_log_lin
+      changed_when: false
+      retries: 6
+      delay: 10
+      until: _db_log_lin.rc == 0
+      become: true
+      when: not appd_is_windows
+
+    - name: Startup line in the agent log (Windows)
+      ansible.windows.win_shell: |
+        $p = '{{ db_agent_log_success_patterns | to_json }}' | ConvertFrom-Json
+        Select-String -Path '{{ db_agent_log_file }}' -Pattern $p -Quiet
+      register: _db_log_win
+      changed_when: false
+      retries: 6
+      delay: 10
+      until: _db_log_win.stdout is search('True')
+      when: appd_is_windows
+
+    - name: Remove the rollback copy (upgrade verified locally)
+      ansible.builtin.file:
+        path: "{{ db_agent_old_dir }}"
+        state: absent
+      become: "{{ not appd_is_windows }}"
+      when: db_agent_old_dir is defined
+
+    - name: Record upgrade result
+      ansible.builtin.set_fact:
+        db_agent_result: "UPGRADED {{ db_agent_current_version | default('unknown') }} -> {{ db_agent_version }}"
+
+  rescue:
+    - name: Roll back (Linux)
+      become: true
+      when: not appd_is_windows and db_agent_old_dir is defined
+      block:
+        - name: Stop the failed new agent
+          ansible.builtin.service:
+            name: "{{ db_agent_service_name }}"
+            state: stopped
+          failed_when: false
+        - name: Delete the failed new install
+          ansible.builtin.file:
+            path: "{{ db_agent_home }}"
+            state: absent
+        - name: Restore the old install
+          ansible.builtin.command: mv "{{ db_agent_old_dir }}" "{{ db_agent_home }}"
+          changed_when: true
+        - name: Start the old agent
+          ansible.builtin.service:
+            name: "{{ db_agent_service_name }}"
+            state: started
+
+    - name: Roll back (Windows)
+      when: appd_is_windows and db_agent_old_dir is defined
+      block:
+        - name: Stop the failed new agent
+          ansible.windows.win_service:
+            name: "{{ db_agent_service_name }}"
+            state: stopped
+          failed_when: false
+        - name: Delete the failed new install
+          ansible.windows.win_file:
+            path: "{{ db_agent_home }}"
+            state: absent
+        - name: Restore the old install
+          ansible.windows.win_shell: Move-Item -Path '{{ db_agent_old_dir }}' -Destination '{{ db_agent_home }}'
+          changed_when: true
+        - name: Start the old agent
+          ansible.windows.win_service:
+            name: "{{ db_agent_service_name }}"
+            state: started
+
+    - name: Record rollback
+      ansible.builtin.set_fact:
+        db_agent_go: false
+        db_agent_skip_reason: "post-upgrade verify FAILED — ROLLED BACK to {{ db_agent_current_version | default('previous version') }}"
+        db_agent_result: "UPGRADE FAILED — rolled back to {{ db_agent_current_version | default('previous') }}"

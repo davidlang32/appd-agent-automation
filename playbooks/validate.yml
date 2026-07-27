@@ -76,16 +76,34 @@
     - appd_common
   tasks:
     - name: Check db agent service (Linux)
-      ansible.builtin.command: "systemctl is-active appdynamics-db-agent"
+      ansible.builtin.command: "systemctl is-active {{ db_agent_service_name }}"
       register: _dbsvc
       changed_when: false
       failed_when: false
       when: not appd_is_windows
     - name: Check db agent service (Windows)
       ansible.windows.win_service_info:
-        name: "appdynamics-db-agent"
+        name: "{{ db_agent_service_name }}"
       register: _dbsvc_win
       when: appd_is_windows
-    - name: Report db agent status
+    - name: Report db agent service status
       ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: {{ _dbsvc.stdout | default(_dbsvc_win.services[0].state | default('unknown')) }}"
+
+    - name: Startup line in the db agent log (Linux)
+      ansible.builtin.shell: grep -E "{{ db_agent_log_success_patterns | join('|') }}" "{{ db_agent_log_file }}"
+      register: _dblog
+      changed_when: false
+      failed_when: false
+      when: not appd_is_windows
+
+    - name: Report db agent registration (Linux)
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ 'startup line found in log' if _dblog.rc == 0 else 'no startup line yet — check ' ~ db_agent_log_file }}
+      when: not appd_is_windows
+
+    # NOTE: a DB agent's "is it reporting" truth lives in the controller's
+    # Databases dashboard (collectors are configured there, not on the host),
+    # so we verify service + startup log here rather than an availability metric.

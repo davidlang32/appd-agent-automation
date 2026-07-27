@@ -133,14 +133,14 @@
         $old = '{{ machine_agent_old_dir }}'; $new = '{{ machine_agent_home }}'
         $preserve = '{{ machine_agent_preserve_files | to_json }}' | ConvertFrom-Json
         foreach ($rel in $preserve) {
-          $rel = $rel -replace '/', '\'; $s = Join-Path $old $rel
+          $rel = $rel.Replace([char]47,[char]92); $s = Join-Path $old $rel
           if (Test-Path $s) { $d = Join-Path $new $rel; New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null; Copy-Item $s $d -Recurse -Force }
         }
         $stock = '{{ machine_agent_stock_extensions | to_json }}' | ConvertFrom-Json
         foreach ($base in ('{{ machine_agent_custom_dirs | to_json }}' | ConvertFrom-Json)) {
           $od = Join-Path $old $base
           if (Test-Path $od) { Get-ChildItem $od -Directory | Where-Object { $stock -notcontains $_.Name } | ForEach-Object {
-            $d = Join-Path $new ($base + '\' + $_.Name); if (-not (Test-Path $d)) { Copy-Item $_.FullName $d -Recurse } } }
+            $d = Join-Path $new ($base + [char]92 + $_.Name); if (-not (Test-Path $d)) { Copy-Item $_.FullName $d -Recurse } } }
         }
 
     - name: Write version marker

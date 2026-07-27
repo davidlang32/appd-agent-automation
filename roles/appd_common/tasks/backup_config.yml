@@ -73,10 +73,14 @@
         cp "/etc/sysconfig/{{ bc_service_name }}" "{{ bc_backup_dir }}/{{ _bc_name }}/service/" 2>/dev/null || true
       changed_when: true
 
-    - name: Redact secrets in archived controller-info.xml
+    - name: Redact known AppD secrets across all archived files
       ansible.builtin.shell: |
-        f=$(find "{{ bc_backup_dir }}/{{ _bc_name }}" -name controller-info.xml 2>/dev/null | head -1)
-        [ -n "$f" ] && sed -i -E 's#{{ _bc_scrub_regex }}#<account-access-key>REDACTED-SEE-VAULT</account-access-key>#' "$f" || true
+        find "{{ bc_backup_dir }}/{{ _bc_name }}" -type f 2>/dev/null | while read -r f; do
+          sed -i -E \
+            -e 's#<account-access-key>[^<]*</account-access-key>#<account-access-key>REDACTED-SEE-VAULT</account-access-key>#g' \
+            -e 's#(accountAccessKey[[:space:]]*=[[:space:]]*).*#\1REDACTED-SEE-VAULT#g' \
+            "$f" 2>/dev/null || true
+        done
       failed_when: false
       changed_when: true
 
@@ -121,7 +125,7 @@
         $dst = '{{ bc_backup_dir }}\{{ _bc_name }}'
         $preserve = '{{ bc_preserve | default([]) | to_json }}' | ConvertFrom-Json
         foreach ($rel in $preserve) {
-          $rel = $rel -replace '/', '\'
+          $rel = $rel.Replace([char]47,[char]92)
           $s = Join-Path $src $rel
           if (Test-Path $s) {
             $d = Join-Path $dst $rel
@@ -135,7 +139,7 @@
           $srcd = Join-Path $src $base
           if (Test-Path $srcd) {
             Get-ChildItem $srcd -Directory | Where-Object { $stock -notcontains $_.Name } | ForEach-Object {
-              $d = Join-Path $dst ($base + '\' + $_.Name)
+              $d = Join-Path $dst ($base + [char]92 + $_.Name)
               New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
               Copy-Item $_.FullName $d -Recurse -Force
             }
@@ -143,12 +147,24 @@
         }
         New-Item -ItemType Directory -Force -Path (Join-Path $dst 'service') | Out-Null
         $svc = Get-CimInstance Win32_Service -Filter "Name='{{ bc_service_name }}'" -ErrorAction SilentlyContinue
-        if ($svc) { $svc | Select-Object Name,PathName,StartMode,StartName | Out-File (Join-Path $dst 'service\service-definition.txt') }
+        if ($svc) { $svc | Select-Object Name,PathName,StartMode,StartName | Out-File (Join-Path $dst 'service/service-definition.txt') }
 
-    - name: Redact secrets in archived controller-info.xml
+    - name: Export the service registry key (optional; Windows service account etc.)
+      ansible.windows.win_shell: >-
+        reg export "HKLM\SYSTEM\CurrentControlSet\Services\{{ bc_service_name }}"
+        "{{ bc_backup_dir }}\{{ _bc_name }}\service\{{ bc_service_name }}.reg" /y
+      failed_when: false
+      when: bc_export_service_registry | default(false) | bool
+
+    - name: Redact known AppD secrets across all archived files
       ansible.windows.win_shell: |
-        $f = Get-ChildItem '{{ bc_backup_dir }}\{{ _bc_name }}' -Recurse -Filter controller-info.xml -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($f) { (Get-Content $f.FullName -Raw) -replace '{{ _bc_scrub_regex }}', '<account-access-key>REDACTED-SEE-VAULT</account-access-key>' | Set-Content $f.FullName }
+        Get-ChildItem '{{ bc_backup_dir }}\{{ _bc_name }}' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+          try {
+            (Get-Content $_.FullName -Raw) `
+              -replace '<account-access-key>[^<]*</account-access-key>', '<account-access-key>REDACTED-SEE-VAULT</account-access-key>' `
+              -replace '(accountAccessKey\s*=\s*).*', '${1}REDACTED-SEE-VAULT' | Set-Content $_.FullName
+          } catch {}
+        }
       failed_when: false
 
     - name: Write manifest

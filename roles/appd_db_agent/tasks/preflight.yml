@@ -1,0 +1,190 @@
+---
+# =============================================================================
+# DB Agent preflight — assess the host before any change; on any failure mark
+# the host SKIPPED (recorded, run continues). Never changes the host.
+# Sets: db_agent_go, db_agent_skip_reason, db_agent_installed,
+#       db_agent_current_version
+# =============================================================================
+
+- name: Preflight
+  block:
+    - name: Verify privilege escalation (Linux)
+      ansible.builtin.command: id -u
+      become: true
+      changed_when: false
+      register: _db_root
+      failed_when: _db_root.stdout | trim != '0'
+      when: not appd_is_windows
+
+    - name: Verify admin rights (Windows)
+      ansible.windows.win_shell: >-
+        ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      changed_when: false
+      register: _db_admin
+      failed_when: _db_admin.stdout is not search('True')
+      when: appd_is_windows
+
+    - name: Check free disk at agent home (Linux)
+      ansible.builtin.shell: |
+        set -e
+        p="{{ db_agent_home }}"
+        while [ ! -d "$p" ]; do p=$(dirname "$p"); done
+        df -Pm "$p" | awk 'NR==2 {print $4}'
+      register: _db_free_lin
+      changed_when: false
+      failed_when: _db_free_lin.stdout | trim | int < db_agent_min_free_mb
+      when:
+        - not appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Check free disk at agent home (Windows)
+      ansible.windows.win_shell: |
+        $drive = (Split-Path -Qualifier '{{ db_agent_home }}').TrimEnd(':')
+        [math]::Floor((Get-PSDrive -Name $drive).Free / 1MB)
+      register: _db_free_win
+      changed_when: false
+      failed_when: _db_free_win.stdout | trim | int < db_agent_min_free_mb
+      when:
+        - appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Verify controller reachable (Linux)
+      ansible.builtin.wait_for:
+        host: "{{ appd_controller_host }}"
+        port: "{{ appd_controller_port }}"
+        timeout: 10
+      when:
+        - not appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Verify controller reachable (Windows)
+      ansible.windows.win_wait_for:
+        host: "{{ appd_controller_host }}"
+        port: "{{ appd_controller_port }}"
+        timeout: 10
+      when:
+        - appd_is_windows
+        - appd_action in ['install', 'upgrade']
+
+    - name: Check the agent bundle staged on the control node
+      ansible.builtin.stat:
+        path: "{{ db_agent_bundle_dir }}/{{ db_agent_bundle_zip }}"
+        checksum_algorithm: sha256
+      register: _db_zip
+      delegate_to: localhost
+      become: false
+      when: appd_action in ['install', 'upgrade']
+
+    - name: Verify bundle exists (and checksum, when pinned)
+      ansible.builtin.assert:
+        that:
+          - _db_zip.stat.exists
+          - db_agent_bundle_sha256 | length == 0 or _db_zip.stat.checksum == db_agent_bundle_sha256
+        fail_msg: "{{ db_agent_bundle_zip }} missing from {{ db_agent_bundle_dir }} or sha256 mismatch"
+      when: appd_action in ['install', 'upgrade']
+
+    - name: Detect existing install (Linux)
+      ansible.builtin.stat:
+        path: "{{ db_agent_home }}/db-agent.jar"
+      register: _db_exist_lin
+      when: not appd_is_windows
+
+    - name: Detect existing install (Windows)
+      ansible.windows.win_stat:
+        path: "{{ db_agent_home }}\\db-agent.jar"
+      register: _db_exist_win
+      when: appd_is_windows
+
+    - name: Record installed state
+      ansible.builtin.set_fact:
+        db_agent_installed: "{{ (_db_exist_win.stat.exists if appd_is_windows else _db_exist_lin.stat.exists) | bool }}"
+
+    - name: Read version marker (Linux)
+      ansible.builtin.slurp:
+        src: "{{ db_agent_marker_file }}"
+      register: _db_marker_lin
+      failed_when: false
+      when: not appd_is_windows
+
+    - name: Read version marker (Windows)
+      ansible.windows.win_shell: >-
+        if (Test-Path '{{ db_agent_marker_file }}') { (Get-Content '{{ db_agent_marker_file }}' -Raw).Trim() } else { '' }
+      register: _db_marker_win
+      changed_when: false
+      failed_when: false
+      when: appd_is_windows
+
+    - name: Record current version
+      ansible.builtin.set_fact:
+        db_agent_current_version: >-
+          {{ ((_db_marker_win.stdout | default('') | trim)
+              if appd_is_windows
+              else (_db_marker_lin.content | default('') | b64decode | trim)) or 'unknown' }}
+
+    - name: Preflight passed
+      ansible.builtin.set_fact:
+        db_agent_go: true
+        db_agent_skip_reason: ""
+
+  rescue:
+    - name: Preflight failed — skip this host
+      ansible.builtin.set_fact:
+        db_agent_go: false
+        db_agent_skip_reason: >-
+          preflight failed at '{{ ansible_failed_task.name | default('unknown') }}'
+          ({{ ansible_failed_result.msg | default('see run log') }})
+
+# ---- action gates (skip/no-op, never abort) --------------------------------
+- name: "Gate :: install but already installed"
+  ansible.builtin.set_fact:
+    db_agent_go: false
+    db_agent_skip_reason: "agent {{ db_agent_current_version | default('unknown') }} already installed; use appd_action=upgrade"
+  when:
+    - db_agent_go | default(false)
+    - appd_action == 'install'
+    - db_agent_installed | default(false)
+    - not appd_force | default(false) | bool
+
+- name: "Gate :: fresh Windows install without a service account"
+  ansible.builtin.set_fact:
+    db_agent_go: false
+    db_agent_skip_reason: "Windows install needs db_agent_win_service_account (+ vault password) so the service does not fall back to LocalSystem"
+  when:
+    - db_agent_go | default(false)
+    - appd_is_windows
+    - appd_action == 'install'
+    - not (db_agent_installed | default(false))
+    - db_agent_win_service_account | default('') | length == 0
+
+- name: "Gate :: upgrade but nothing installed"
+  ansible.builtin.set_fact:
+    db_agent_go: false
+    db_agent_skip_reason: "no agent installed; use appd_action=install"
+  when:
+    - db_agent_go | default(false)
+    - appd_action == 'upgrade'
+    - not (db_agent_installed | default(false))
+
+- name: "Gate :: already at target version"
+  ansible.builtin.set_fact:
+    db_agent_go: false
+    db_agent_skip_reason: "already at {{ db_agent_version }} (no change; -e appd_force=true to reinstall)"
+  when:
+    - db_agent_go | default(false)
+    - appd_action == 'upgrade'
+    - db_agent_current_version | default('unknown') == db_agent_version
+    - not appd_force | default(false) | bool
+
+- name: "Gate :: uninstall but nothing installed"
+  ansible.builtin.set_fact:
+    db_agent_go: false
+    db_agent_skip_reason: "no agent present, nothing to remove"
+  when:
+    - db_agent_go | default(false)
+    - appd_action == 'uninstall'
+    - not (db_agent_installed | default(false))
+
+- name: Announce skip
+  ansible.builtin.debug:
+    msg: "SKIP {{ inventory_hostname }}: {{ db_agent_skip_reason }}"
+  when: not (db_agent_go | default(false)) or appd_force | default(false) | bool

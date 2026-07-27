@@ -1,6 +1,23 @@
 ---
-# STARTER STUB
-- name: Stop DB agent service before removal
+# Uninstall: archive the config AND the Windows service registry/account (the
+# only thing left behind), then fully delete the install and de-register the
+# service so no stale agent remains.
+
+- name: Archive config + service registry before removal
+  ansible.builtin.include_role:
+    name: appd_common
+    tasks_from: backup_config
+  vars:
+    bc_agent_home: "{{ db_agent_home }}"
+    bc_version: "{{ db_agent_current_version | default('unknown') }}"
+    bc_preserve: "{{ db_agent_preserve_files }}"
+    bc_custom_dirs: "{{ db_agent_custom_dirs }}"
+    bc_stock_names: []
+    bc_service_name: "{{ db_agent_service_name }}"
+    bc_backup_dir: "{{ db_agent_backup_dir }}"
+    bc_export_service_registry: true
+
+- name: Stop the service
   ansible.builtin.include_role:
     name: appd_common
     tasks_from: manage_service
@@ -9,15 +26,87 @@
     appd_service_state: stopped
   ignore_errors: true
 
-- name: Remove DB agent home (Linux)
-  ansible.builtin.file:
-    path: "{{ db_agent_home }}"
-    state: absent
+# ---------------------------------------------------------------- Linux -----
+- name: Uninstall (Linux)
   become: true
   when: not appd_is_windows
+  block:
+    - name: Disable the service
+      ansible.builtin.systemd:
+        name: "{{ db_agent_service_name }}"
+        enabled: false
+      failed_when: false
 
-- name: Remove DB agent home (Windows)
-  ansible.windows.win_file:
-    path: "{{ db_agent_home }}"
-    state: absent
+    - name: Kill any lingering agent process
+      ansible.builtin.command: pkill -f db-agent.jar
+      register: _db_pkill
+      failed_when: false
+      changed_when: _db_pkill.rc == 0
+
+    - name: Remove systemd unit
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ db_agent_service_name }}.service"
+        state: absent
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Delete the install directory
+      ansible.builtin.file:
+        path: "{{ db_agent_home }}"
+        state: absent
+
+    - name: Verify the agent is gone
+      ansible.builtin.stat:
+        path: "{{ db_agent_home }}"
+      register: _db_rm_lin
+
+    - name: Assert removal
+      ansible.builtin.assert:
+        that: not _db_rm_lin.stat.exists
+        fail_msg: "{{ db_agent_home }} still present after removal"
+
+# -------------------------------------------------------------- Windows -----
+- name: Uninstall (Windows)
   when: appd_is_windows
+  block:
+    - name: Kill any lingering agent JVM
+      ansible.windows.win_shell: |
+        Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
+          Where-Object { $_.CommandLine -like '*db-agent.jar*' } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+      failed_when: false
+      changed_when: false
+
+    - name: De-register the DatabaseAgentService wrapper
+      ansible.windows.win_shell: "{{ db_agent_win_service_uninstall_cmd }}"
+      args:
+        chdir: "{{ db_agent_bin_dir }}"
+      failed_when: false
+      changed_when: true
+
+    - name: Ensure the service registration is gone
+      ansible.windows.win_service:
+        name: "{{ db_agent_service_name }}"
+        state: absent
+      failed_when: false
+
+    - name: Delete the install directory
+      ansible.windows.win_file:
+        path: "{{ db_agent_home }}"
+        state: absent
+
+    - name: Verify the agent is gone
+      ansible.windows.win_stat:
+        path: "{{ db_agent_home }}"
+      register: _db_rm_win
+
+    - name: Assert removal
+      ansible.builtin.assert:
+        that: not _db_rm_win.stat.exists
+        fail_msg: "{{ db_agent_home }} still present after removal"
+
+- name: Record uninstall result
+  ansible.builtin.set_fact:
+    db_agent_result: "REMOVED {{ db_agent_current_version | default('unknown') }} — config + service registry archived at {{ bc_archive_path | default('n/a') }}"
